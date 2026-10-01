@@ -70,6 +70,8 @@ SETTINGS: tuple[SettingDef, ...] = (
                "str", "planet", pattern=r"planet|geofabrik"),
     SettingDef("download.srtm", "download", "SRTM elevation", "Base URL of the Skadi elevation tiles.",
                "url", "s3://elevation-tiles-prod/skadi/", schemes=("http", "https", "s3")),
+    SettingDef("download.srtm_keep", "download", "SRTM versions kept", "How many versions of each SRTM tile are kept (they almost never change).",
+               "int", 1, min=1, max=3),
     SettingDef("download.natural_earth", "download", "Natural Earth", "Base URL for Natural Earth zips.",
                "url", "https://naturalearth.s3.amazonaws.com/"),
     SettingDef("download.land_polygons", "download", "OSM land polygons", "Split land polygons zip (EPSG:4326).",

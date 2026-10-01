@@ -1,0 +1,5 @@
+{% set summary = run.report_json.get('summary') %}
+<p>{{ summary.tiles }} elevation tile(s): {{ summary.downloaded }} downloaded, {{ summary.unchanged }} unchanged upstream, {{ summary.missing }} missing (open sea).
+  {{ summary.unpacked_bytes|filesize }} unpacked into <code>{{ summary.directory }}</code>.</p>
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% if run.report_json.missing_tiles %}<p class="muted">Missing: {{ run.report_json.missing_tiles|join(', ') }}</p>{% endif %}

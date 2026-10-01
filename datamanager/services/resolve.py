@@ -19,6 +19,7 @@ from datamanager.services import address_sources as address_source_service
 from datamanager.services import boundary_sources as boundary_source_service
 from datamanager.services import map_styles as style_service
 from datamanager.services import regions as region_service
+from datamanager.services import srtm
 
 
 @dataclass
@@ -82,12 +83,8 @@ def _country(country: Country, excluded: set[str], carve: dict | None = None) ->
 
 
 def count_srtm_tiles(boxes) -> int:
-    """Distinct 1° tiles over [min_lat, max_lat, min_lon, max_lon] boxes (inclusive, as
-    data-pipeline's Region._tile_list_for_box)."""
-    tiles = set()
-    for min_lat, max_lat, min_lon, max_lon in boxes:
-        tiles.update((lat, lon) for lat in range(min_lat, max_lat + 1) for lon in range(min_lon, max_lon + 1))
-    return len(tiles)
+    """Distinct 1° tiles over [min_lat, max_lat, min_lon, max_lon] boxes."""
+    return len(srtm.tiles(boxes))
 
 
 def _content(resolved: ResolvedRegion) -> dict:

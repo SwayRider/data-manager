@@ -13,6 +13,7 @@ from datamanager.models import Asset, BuildRun
 from datamanager.services import assets, downloads
 from datamanager.stages.download_osm import osm_source_key, planned_paths
 from datamanager.stages.download_planet import PLANET_KEY, STALE_DAYS, _age_days
+from datamanager.stages.download_srtm import planned_tiles, srtm_fingerprint
 from datamanager.stages.download_tiles import STALE_DAYS as TILES_STALE_DAYS, TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
 from datamanager.stages.polygons import polygons_fingerprint
@@ -106,6 +107,21 @@ def _polygons(session, config_id, resolved) -> StageStatus:
     return StageStatus("ok", "Polygons match the current regions.")
 
 
+def _srtm(session, config_id, resolved) -> StageStatus:
+    names = planned_tiles(resolved)
+    run = (
+        session.query(BuildRun)
+        .filter(BuildRun.stage_key == "download-srtm", BuildRun.config_profile_id == config_id, BuildRun.status == "approved")
+        .order_by(BuildRun.id.desc()).first()
+    )
+    if run is None:
+        return StageStatus("todo", f"{len(names)} elevation tiles to download.")
+    summary = (run.report_json or {}).get("summary", {})
+    if summary.get("fingerprint") != srtm_fingerprint(resolved):
+        return StageStatus("outdated", "The regions need other elevation tiles than the last run fetched.")
+    return StageStatus("ok", f"{summary.get('tiles', len(names))} tiles ({summary.get('missing', 0)} over open sea).")
+
+
 def _styles(session, config_id) -> StageStatus:
     newest = (
         session.query(Asset)
@@ -159,6 +175,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "extract-countries": lambda: _countries(session, resolved),
         "download-osm": lambda: _geofabrik(session, resolved),
         "polygons": lambda: _polygons(session, config_id, resolved),
+        "download-srtm": lambda: _srtm(session, config_id, resolved),
         "styles": lambda: _styles(session, config_id),
         "osm-extract": lambda: _regions(session, config_id, resolved),
     }

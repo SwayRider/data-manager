@@ -131,7 +131,7 @@ def _head(url: str, timeout: float) -> requests.Response:
         except requests.RequestException as exc:
             raise DownloadError(f"Could not reach {url}: {exc}", url=url) from exc
     if response.status_code >= 400:
-        raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url)
+        raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url, status=response.status_code)
     return response
 
 
@@ -152,7 +152,7 @@ def _stream_single(url: str, temp: Path, total: int, timeout: float, progress_cb
         try:
             with requests.get(url, stream=True, allow_redirects=True, timeout=(timeout, 60), headers=headers) as response:
                 if response.status_code >= 400:
-                    raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url)
+                    raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url, status=response.status_code)
                 if size and response.status_code != 206:  # no resume support: start over
                     size = 0
                 if response.status_code == 200:
@@ -187,7 +187,7 @@ def _fetch_segment(url: str, fd: int, start: int, end: int, timeout: float, stop
                 if response.status_code == 429 or response.status_code >= 500:
                     raise _Transient(f"HTTP {response.status_code}")
                 if response.status_code >= 400:
-                    raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url)
+                    raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url, status=response.status_code)
                 window_start, window_bytes = time.monotonic(), 0
                 for chunk in response.iter_content(READ_CHUNK):
                     if stop.is_set():
@@ -373,7 +373,7 @@ def apply_review(session: Session, run: BuildRun, approved: bool) -> None:
         ).update({"status": "rejected"})
 
 
-PRUNED_PREFIXES = {"planet:": "download.planet_keep", "tiles:": "download.tiles_keep"}  # huge sources: keep N after approval
+PRUNED_PREFIXES = {"planet:": "download.planet_keep", "tiles:": "download.tiles_keep", "srtm:": "download.srtm_keep"}  # huge sources: keep N after approval
 
 
 def _prune_planet(session: Session, ids: list[int]) -> None:

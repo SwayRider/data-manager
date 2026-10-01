@@ -252,6 +252,7 @@ def test_cards_show_a_status_indicator_and_a_legend(client, cfg):
     assert 'class="stage-dot dot-blocked"' in _card(html, "Extract countries")
     assert "No approved planet" in _card(html, "Extract countries")
     assert 'class="stage-dot dot-todo"' in _card(html, "Map styles")  # needs only the configuration
+    assert "Download elevation (SRTM)" in html
 
 
 def test_running_review_and_failed_indicators_link_to_the_run(client, cfg):
