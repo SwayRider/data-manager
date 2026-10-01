@@ -16,6 +16,7 @@ from datamanager.stages.download_planet import PLANET_KEY, STALE_DAYS, _age_days
 from datamanager.stages.download_tiles import STALE_DAYS as TILES_STALE_DAYS, TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
 from datamanager.stages.polygons import polygons_fingerprint
+from datamanager.stages.styles import styles_fingerprint
 
 GLOBAL_STAGES = {"download-planet", "download-tiles"}  # not tied to one configuration
 LABELS = {
@@ -105,6 +106,19 @@ def _polygons(session, config_id, resolved) -> StageStatus:
     return StageStatus("ok", "Polygons match the current regions.")
 
 
+def _styles(session, config_id) -> StageStatus:
+    newest = (
+        session.query(Asset)
+        .filter(Asset.config_profile_id == config_id, Asset.asset_type == "style", Asset.status == "approved")
+        .order_by(Asset.id.desc()).first()
+    )
+    if newest is None:
+        return StageStatus("todo", "No approved style files yet.")
+    if newest.meta_json.get("fingerprint") != styles_fingerprint(session, config_id):
+        return StageStatus("outdated", "Styles, label zooms or public URLs changed since the style files were made.")
+    return StageStatus("ok", "Style files match the Style tab.")
+
+
 def _region_is_current(asset, plan) -> bool:
     """Compare a built region with what it would be built from now. Files made before fingerprints were
     recorded are compared by the country files and overlap polygon their meta lists."""
@@ -145,6 +159,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "extract-countries": lambda: _countries(session, resolved),
         "download-osm": lambda: _geofabrik(session, resolved),
         "polygons": lambda: _polygons(session, config_id, resolved),
+        "styles": lambda: _styles(session, config_id),
         "osm-extract": lambda: _regions(session, config_id, resolved),
     }
     result = {}

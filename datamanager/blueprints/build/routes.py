@@ -37,6 +37,9 @@ STAGES = (
      "Fetches the newest daily Protomaps planet build (Z0–15, about 140 GB, Protomaps basemap schema) as a new version, "
      "unless there is no newer one, and checks its header and layers. Needs no configuration; the newest build "
      "is kept (Settings → Download sources)."),
+    ("styles", "Map styles",
+     "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
+     "URLs of Settings → Public URLs). Needs only the configuration."),
     ("osm-extract", "OSM extract",
      "Builds each region's core PBF (core countries merged, carved ones clipped) and full PBF (core plus the "
      "overlap countries clipped to the overlap polygon). Needs the approved country PBFs and approved polygons; "

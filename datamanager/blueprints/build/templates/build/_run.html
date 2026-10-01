@@ -32,6 +32,7 @@
 {% if run.report_json %}
 <h2>Validation report</h2>
 {% if run.report_json.get('polygons') is not none %}{% include "build/_report_polygons.html" %}
+{% elif run.report_json.get('styles') is not none %}{% include "build/_report_styles.html" %}
 {% elif run.report_json.get('regions') is not none %}{% include "build/_report_osm_extract.html" %}
 {% elif run.report_json.get('countries') is not none %}{% include "build/_report_countries.html" %}
 {% elif run.report_json.get('file') is not none %}{% include "build/_report_planet.html" %}

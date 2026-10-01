@@ -7,7 +7,8 @@ from datamanager.stages.osm_extract import OsmExtractStage
 from datamanager.stages.noop import NoOpStage
 from datamanager.stages.polygons import PolygonsStage
 from datamanager.stages.registry import default_registry
+from datamanager.stages.styles import StylesStage
 
 for _stage in (NoOpStage, DownloadOsmStage, PolygonsStage, OsmExtractStage, DownloadPlanetStage, ExtractCountriesStage,
-               DownloadTilesStage):
+               DownloadTilesStage, StylesStage):
     default_registry.register(_stage)
