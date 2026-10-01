@@ -1,0 +1,5 @@
+<label class="inline">
+  <input type="checkbox" name="overture_enabled" value="1" {{ 'checked' if values.overture_enabled }}>
+  Overture Maps addresses
+  <small class="muted">{{ "— listed in Overture's address theme" if overture_covered else "— not listed in Overture's address theme (likely empty)" }}</small>
+</label>

@@ -1,0 +1,45 @@
+<div id="downloads">
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form hx-post="{{ url_for('build.cleanup') }}" hx-target="#downloads" hx-swap="outerHTML" class="add-region">
+  <label>Keep newest <input type="number" name="keep" value="{{ cleanup.keep if cleanup else keep }}" min="1" max="20" style="width:4rem"> versions per source</label>
+  <button>Preview cleanup</button>
+  {% if cleanup and cleanup.dry_run and cleanup.ids %}
+  <button class="danger" name="confirm" value="1">Delete {{ cleanup.ids|length }} version(s) ({{ cleanup.bytes|filesize }})</button>
+  {% endif %}
+</form>
+{% if cleanup %}
+<p class="muted">{% if cleanup.dry_run %}Would delete{% else %}Deleted{% endif %} {{ cleanup.ids|length }} version(s), freeing {{ cleanup.bytes|filesize }}.
+  Pinned versions and the one stages currently use are never removed.</p>
+{% endif %}
+
+{% for source in sources %}
+<section class="resolved-region">
+  <h3>{{ source.key }}</h3>
+  <table class="resolved-table">
+    <tr><th>Version (UTC)</th><th>Size</th><th>SHA-256</th><th>Status</th><th></th></tr>
+    {% for v in source.versions %}
+    <tr>
+      <td>{{ v.version_label }}{% if v.id == source.selected_id %} <span class="badge">in use</span>{% endif %}{% if v.pinned %} <span class="badge">pinned</span>{% endif %}</td>
+      <td>{{ v.size_bytes|filesize }}</td>
+      <td><code title="{{ v.content_hash }}">{{ v.content_hash[:12] }}</code></td>
+      <td><span class="badge status-{{ v.status }}">{{ v.status }}</span>{% if v.run_id %} <a href="{{ url_for('build.run_detail', run_id=v.run_id) }}">run {{ v.run_id }}</a>{% endif %}</td>
+      <td>
+        {% if v.status != 'rejected' %}
+        <form class="inline-form" hx-post="{{ url_for('build.pin', record_id=v.id) }}" hx-target="#downloads" hx-swap="outerHTML">
+          <input type="hidden" name="pinned" value="{{ '0' if v.pinned else '1' }}">
+          <button>{{ 'Unpin' if v.pinned else 'Pin' }}</button>
+        </form>
+        {% endif %}
+        <form class="inline-form" hx-post="{{ url_for('build.delete', record_id=v.id) }}" hx-target="#downloads" hx-swap="outerHTML"
+              hx-confirm="Delete this version?">
+          <button class="danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% else %}
+<p class="empty-state">No downloads yet. Run “Download OSM extracts” on the Stages tab.</p>
+{% endfor %}
+</div>

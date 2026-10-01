@@ -1,0 +1,37 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}
+<p>{{ summary.regions }} region(s), {{ summary.bytes|filesize }} in total;
+  {{ summary.failed }} failed; {{ summary.warnings }} warning(s).</p>
+{% endif %}
+{% for r in run.report_json.get('regions', []) %}
+<section class="resolved-region">
+  <h3>{{ r.name }} <span class="badge status-{{ r.status }}">{{ r.status }}</span></h3>
+  {% if r.message %}<p class="error">{{ r.message }}</p>{% endif %}
+  {% for w in r.warnings %}<p class="warn-line">{{ w }}</p>{% endfor %}
+  {% if r.core %}
+  <table class="resolved-table">
+    <tr><th>File</th><th>Size</th><th>Nodes</th><th>Ways</th><th>Relations</th><th>Bounding box</th><th>Data timestamp</th><th>SHA-256</th></tr>
+    {% for label, part in (('core', r.core), ('region', r.pbf)) %}
+    <tr>
+      <td>{{ label }}</td><td>{{ part.size_bytes|filesize }}</td>
+      <td>{{ '{:,}'.format(part.counts.nodes or 0) }}</td><td>{{ '{:,}'.format(part.counts.ways or 0) }}</td>
+      <td>{{ '{:,}'.format(part.counts.relations or 0) }}</td>
+      <td>{% if part.bbox %}<code>{{ part.bbox|map('round', 2)|join(', ') }}</code>{% endif %}</td>
+      <td>{{ part.replication_timestamp or part.last_timestamp or '' }}</td>
+      <td><code title="{{ part.sha256 }}">{{ part.sha256[:8] }}</code></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+  <h4>Inputs</h4>
+  <table class="resolved-table">
+    <tr><th>Country</th><th>Role</th><th>Source</th><th>Version</th><th>Fetched</th><th></th></tr>
+    {% for i in r.inputs %}
+    <tr>
+      <td>{{ i.iso2 }}</td><td>{{ i.role }}</td><td>{{ i.source_key }}</td><td>{{ i.version }}</td><td>{{ i.fetched_at }}</td>
+      <td>{% if i.from_planet %}<span class="badge">planet</span> {% endif %}{% if i.carved %}<span class="badge">carved</span>{% endif %}{% if i.pinned %} <span class="badge">pinned</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endfor %}

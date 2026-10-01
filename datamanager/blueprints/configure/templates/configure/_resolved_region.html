@@ -1,0 +1,50 @@
+{% macro country_table(title, countries, region, config_id) %}
+<h4>{{ title }}</h4>
+{% if countries %}
+<table class="resolved-table">
+  <thead><tr><th>Country</th><th>Geofabrik</th><th>WOF</th><th>OpenAddresses</th><th>Overture</th><th>Boundaries</th><th>SRTM box</th></tr></thead>
+  <tbody>
+  {% for c in countries %}
+  <tr>
+    <td>{{ c.name }}</td>
+    <td>{% if c.geofabrik_path %}<code>{{ c.geofabrik_path }}</code>{% else %}<span class="badge warn">not configured</span>{% endif %}</td>
+    <td>{{ c.wof_code }}</td>
+    <td>
+      {% if c.openaddresses_all %}
+      <details>
+        <summary>{{ c.openaddresses|length }}/{{ c.openaddresses_all|length }} files</summary>
+        {% for f in c.openaddresses_all %}
+        <label class="inline">
+          <input type="checkbox" {{ 'checked' if f in c.openaddresses }}
+                 hx-post="{{ url_for('configure.region_openaddresses', config_id=config_id, region_id=region.region_id, iso2=c.iso2) }}"
+                 hx-vals='{"file": {{ f|tojson }}, "included": "{{ 0 if f in c.openaddresses else 1 }}"}'
+                 hx-target="closest section" hx-swap="outerHTML" hx-trigger="change">
+          <code>{{ f }}</code>
+        </label>
+        {% endfor %}
+      </details>
+      {% else %}—{% endif %}
+    </td>
+    <td>{{ '✓' if c.overture else '—' }}</td>
+    <td>{{ c.boundaries }}</td>
+    <td><code>{{ c.srtm_bbox|join(', ') }}</code></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="muted">None</p>{% endif %}
+{% endmacro %}
+
+<section class="resolved-region">
+  <h3><span class="swatch" style="background: {{ region.color }}"></span>{{ region.name }}
+    {% if region.warnings %}<span class="badge warn">{{ region.warnings|length }} warning{{ 's' if region.warnings|length != 1 }}</span>{% endif %}
+  </h3>
+  {% for w in region.warnings %}<p class="warn-line">⚠ {{ w }}</p>{% endfor %}
+  {{ country_table("Core", region.core, region, config_id) }}
+  {{ country_table("Overlap", region.overlap, region, config_id) }}
+  <h4>SRTM</h4>
+  <p>{{ region.srtm_tiles }} tiles · {% for name, box in region.srtm.items() %}{{ name }} <code>{{ box|join(', ') }}</code>{% if not loop.last %}; {% endif %}{% else %}none{% endfor %}</p>
+  <h4>GTFS feeds</h4>
+  <p>{% for f in region.gtfs_feeds %}<code>{{ f.url }}</code>{% if not loop.last %}, {% endif %}{% else %}none{% endfor %}</p>
+  <p class="muted hash">config hash <code>{{ region.hash[:16] }}</code></p>
+</section>

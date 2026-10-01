@@ -1,0 +1,30 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}
+<p>{{ summary.sources }} source(s): {{ summary.downloaded }} downloaded ({{ summary.bytes|filesize }}),
+   {{ summary.unchanged }} unchanged, {{ summary.failed }} failed.</p>
+{% endif %}
+<table class="resolved-table">
+  <tr><th>Source</th><th>Result</th><th>Version</th><th>Size</th><th>SHA-256</th><th>Checks</th></tr>
+  {% for f in run.report_json.get('files', []) %}
+  <tr>
+    <td>{{ f.source_key }}</td>
+    <td><span class="badge status-{{ f.status }}">{{ f.status }}</span>
+        {% if f.same_bytes_as_older_version %}<span class="muted">(bytes identical to an older version)</span>{% endif %}
+        {% if f.status == 'unchanged' %}<div class="muted">already have it: fetched {{ f.fetched_at }} UTC
+          {% if f.fetched_by_run %}by <a href="{{ url_for('build.run_detail', run_id=f.fetched_by_run) }}">run {{ f.fetched_by_run }}</a>{% endif %},
+          {{ f.record_status }}; upstream has no newer version</div>{% endif %}
+        {% if f.note %}<div class="warn-line">{{ f.note }}</div>{% endif %}
+        {% if f.message %}<div class="error">{{ f.message }}</div>{% endif %}</td>
+    <td>{{ f.version or '' }}</td>
+    <td>{{ f.size_bytes|filesize if f.size_bytes else '' }}</td>
+    <td><code title="{{ f.sha256 }}">{{ (f.sha256 or '')[:12] }}</code></td>
+    <td>
+      {% if f.header %}
+        {% if f.header.ok %}header ok{% if f.header.data_timestamp %}, data of {{ f.header.data_timestamp }}{% endif %}
+        {% elif f.header.ok is none %}<span class="warn-line">{{ f.header.message }}</span>
+        {% else %}<span class="error">{{ f.header.message }}</span>{% endif %}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>

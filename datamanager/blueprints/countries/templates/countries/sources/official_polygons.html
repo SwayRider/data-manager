@@ -1,0 +1,17 @@
+<label>Official polygons URL <small class="muted">(optional)</small>
+  <input name="official_url" value="{{ values.official_url }}" placeholder="https://…"
+         class="{{ 'invalid' if error_field == 'official_url' }}">
+</label>
+<div class="row-fields">
+  <label>Format
+    <select name="official_format" class="{{ 'invalid' if error_field == 'official_format' }}">
+      {% for fmt in ("geojson", "ogc-api", "shapefile-zip") %}
+      <option value="{{ fmt }}" {{ 'selected' if values.official_format == fmt }}>{{ fmt }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Name field
+    <input name="official_name_field" value="{{ values.official_name_field }}" placeholder="naam"
+           class="{{ 'invalid' if error_field == 'official_name_field' }}">
+  </label>
+</div>

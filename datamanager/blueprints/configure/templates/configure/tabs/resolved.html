@@ -1,0 +1,25 @@
+<div class="resolved">
+  <p class="muted">
+    What the build stages will use, derived from the regions on the Map tab (core + overlap countries).
+    <a href="{{ url_for('configure.resolved_yaml', config_id=current.id) }}">Download YAML (legacy shape)</a> ·
+    <a href="{{ url_for('configure.resolved_json', config_id=current.id) }}">Download JSON</a>
+  </p>
+  {% if resolved.border_regions %}
+  <p><strong>Border regions:</strong>
+    {% for a, b in resolved.border_regions %}{{ a }} ↔ {{ b }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+  {% endif %}
+  {% if resolved.style %}
+  <section class="resolved-region">
+    <h3>Map style</h3>
+    <p>Light: {{ resolved.style.light_style }} · dark: {{ resolved.style.dark_style }} ·
+       label overrides: {% for k, z in resolved.style.labels.items() %}{{ k }} Z{{ z }}{% if not loop.last %}, {% endif %}{% else %}none (style defaults){% endfor %}</p>
+    <p class="hash muted">config hash <code>{{ resolved.style.hash[:12] }}</code></p>
+  </section>
+  {% endif %}
+  {% set config_id = current.id %}
+  {% for region in resolved.regions %}
+    {% include "configure/_resolved_region.html" %}
+  {% else %}
+  <p class="empty-state">No regions yet — add regions and countries on the Map tab.</p>
+  {% endfor %}
+</div>

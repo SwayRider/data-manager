@@ -1,0 +1,10 @@
+{% macro nav_link(item, active_section, warnings) %}
+{% set warning = warnings.get(item.endpoint) %}
+<a href="{{ url_for(item.endpoint) }}" class="{{ 'active' if item.blueprint == active_section }}{{ ' warn' if warning }}"
+   {% if warning %}title="{{ warning }}"{% endif %}
+   {% if item.blueprint == active_section %}aria-current="page"{% endif %}>{{ item.label }}</a>
+{% endmacro %}
+
+{% macro empty_state(message) %}
+<p class="empty-state">{{ message }}</p>
+{% endmacro %}

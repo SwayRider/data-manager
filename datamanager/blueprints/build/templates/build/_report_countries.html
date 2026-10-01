@@ -1,0 +1,21 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}
+<p>{{ summary.countries }} country(ies) from planet {{ summary.planet_version }}{% if summary.planet_data_timestamp %} (data of {{ summary.planet_data_timestamp[:10] }}){% endif %}:
+  {{ summary.extracted }} extracted ({{ summary.bytes|filesize }}), {{ summary.unchanged }} unchanged, {{ summary.failed }} failed, {{ summary.warnings }} warning(s).</p>
+{% if summary.batches %}<p class="muted">Cut in {{ summary.batches }} batch(es) of up to {{ summary.batch_size }} countries (memory budget {{ summary.memory_budget_gb }} GB); osmium peaked at {{ summary.peak_memory_gb }} GB.</p>{% endif %}
+{% endif %}
+<table class="resolved-table">
+  <tr><th>Country</th><th>Result</th><th>Size</th><th>Nodes</th><th>Ways</th><th>Relations</th><th>Bounding box</th><th>Notes</th></tr>
+  {% for c in run.report_json.get('countries', []) %}
+  <tr>
+    <td>{{ c.path }}</td>
+    <td><span class="badge status-{{ 'downloaded' if c.status == 'extracted' else 'unchanged' if c.status == 'unchanged' else 'failed' }}">{{ c.status }}</span></td>
+    <td>{% if c.size_bytes %}{{ c.size_bytes|filesize }}{% endif %}</td>
+    <td>{% if c.counts %}{{ '{:,}'.format(c.counts.nodes or 0) }}{% endif %}</td>
+    <td>{% if c.counts %}{{ '{:,}'.format(c.counts.ways or 0) }}{% endif %}</td>
+    <td>{% if c.counts %}{{ '{:,}'.format(c.counts.relations or 0) }}{% endif %}</td>
+    <td>{% if c.bbox %}<code>{{ c.bbox|map('round', 2)|join(', ') }}</code>{% endif %}</td>
+    <td>{% if c.message %}<span class="error">{{ c.message }}</span>{% endif %}{% for w in c.warnings %}<span class="warn-line">{{ w }}</span> {% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>

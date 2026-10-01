@@ -1,0 +1,20 @@
+<form id="global-form" class="settings-form" hx-post="{{ url_for('settings.save_global') }}" hx-target="#global-form" hx-swap="outerHTML">
+  <p class="muted">Applies to every configuration. Empty a field to go back to its default.</p>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% for group in groups %}
+  <fieldset class="extent">
+    <legend>{{ group.label }}</legend>
+    {% for entry in group.settings %}
+    {% set d = entry.def %}
+    <label>{{ d.label }}{% if not entry.is_default %} <span class="badge">changed</span>{% endif %}
+      <input name="{{ d.key }}" value="{{ entry.value }}" {% if d.kind == 'int' %}type="number" min="{{ d.min }}" max="{{ d.max }}"{% else %}type="text"{% endif %}
+             placeholder="{{ d.default }}"></label>
+    <small class="muted">{{ d.help }}{% if d.default != '' %} Default: <code>{{ d.default }}</code>{% endif %}</small>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+  <div class="form-actions">
+    {% if saved %}<span class="muted">Saved.</span>{% endif %}
+    <button type="submit" class="primary">Save</button>
+  </div>
+</form>

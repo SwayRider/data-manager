@@ -1,0 +1,53 @@
+<div id="run-detail" class="run-detail"
+     {% if active %}hx-get="{{ url_for('build.run_detail', run_id=run.id) }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+<h1>Run {{ run.id }} · {{ run.stage_key }}
+  <span class="badge status-{{ run.status }}">{{ run.status.replace('_', ' ') }}</span></h1>
+<p class="muted">
+  Created {{ run.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC
+  {% if run.started_at %}· started {{ run.started_at.strftime('%H:%M:%S') }}{% endif %}
+  {% if run.finished_at %}· finished {{ run.finished_at.strftime('%H:%M:%S') }}{% endif %}
+</p>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% if run.status == 'failed' %}
+<p class="error"><strong>{{ run.error_type }}</strong>: {{ run.error_message }}</p>
+{% endif %}
+
+<h2>Steps</h2>
+{% if run.steps %}
+<table class="resolved-table">
+  {% for s in run.steps %}
+  <tr>
+    <td>{{ s.name }}</td>
+    <td><span class="badge status-{{ s.status }}">{{ s.status }}</span></td>
+    <td>
+      {% if s.progress_total %}<progress max="{{ s.progress_total }}" value="{{ s.progress_current or 0 }}"></progress>{% endif %}
+      {{ s.progress_message or '' }}
+    </td>
+    <td class="error">{{ s.error_message or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">{{ 'Waiting for a worker…' if run.status == 'queued' else 'No steps recorded.' }}</p>{% endif %}
+
+{% if run.report_json %}
+<h2>Validation report</h2>
+{% if run.report_json.get('polygons') is not none %}{% include "build/_report_polygons.html" %}
+{% elif run.report_json.get('regions') is not none %}{% include "build/_report_osm_extract.html" %}
+{% elif run.report_json.get('countries') is not none %}{% include "build/_report_countries.html" %}
+{% elif run.report_json.get('file') is not none %}{% include "build/_report_planet.html" %}
+{% else %}{% include "build/_report_downloads.html" %}{% endif %}
+{% endif %}
+
+{% if run.status == 'awaiting_review' %}
+<h2>Review</h2>
+<p class="muted">Approving makes this run's results the input later stages use by default. Rejecting discards what it produced (downloaded versions or files).</p>
+<form hx-post="{{ url_for('build.approve', run_id=run.id) }}" hx-target="#run-detail" hx-swap="outerHTML" class="add-region">
+  <input name="note" placeholder="Note (optional)" maxlength="500">
+  <button class="primary">Approve</button>
+  <button type="submit" class="danger" hx-post="{{ url_for('build.reject', run_id=run.id) }}"
+          hx-confirm="Reject this run and its downloaded versions?">Reject</button>
+</form>
+{% elif run.reviewed_at %}
+<p>{{ run.status.capitalize() }} {{ run.reviewed_at.strftime('%Y-%m-%d %H:%M') }} UTC{% if run.review_note %}: {{ run.review_note }}{% endif %}</p>
+{% endif %}
+</div>

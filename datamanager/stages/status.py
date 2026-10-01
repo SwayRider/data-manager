@@ -1,0 +1,165 @@
+"""Where each build stage stands for a configuration, for the colored indicators on the Build page.
+
+Per stage: running / waiting for review / failed (from its latest run), blocked (a prerequisite is missing),
+otherwise by content: not run yet, up to date, or outdated because something it was built from has changed
+since (a newer approved planet, other regions or carves, other country files or polygons, ...). "Built from"
+is recorded as a fingerprint in the meta of the assets a stage produces, and compared with the current one."""
+import datetime
+from dataclasses import dataclass
+
+from sqlalchemy.orm import Session
+
+from datamanager.models import Asset, BuildRun
+from datamanager.services import assets, downloads
+from datamanager.stages.download_osm import osm_source_key, planned_paths
+from datamanager.stages.download_planet import PLANET_KEY, STALE_DAYS, _age_days
+from datamanager.stages.download_tiles import STALE_DAYS as TILES_STALE_DAYS, TILES_KEY
+from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
+from datamanager.stages.polygons import polygons_fingerprint
+
+GLOBAL_STAGES = {"download-planet", "download-tiles"}  # not tied to one configuration
+LABELS = {
+    "ok": "Up to date",
+    "outdated": "Outdated: run it again",
+    "todo": "Ready, not run yet",
+    "review": "Waiting for your review",
+    "running": "Running",
+    "failed": "Last run failed",
+    "blocked": "Blocked by a prerequisite",
+}
+
+
+@dataclass
+class StageStatus:
+    state: str
+    detail: str = ""
+    run_id: int | None = None  # the run behind a running / review / failed state, for linking to its page
+
+    @property
+    def label(self) -> str:
+        return LABELS[self.state]
+
+
+def _latest_run(session: Session, key: str, config_id: int) -> BuildRun | None:
+    query = session.query(BuildRun).filter(BuildRun.stage_key == key)
+    if key not in GLOBAL_STAGES:
+        query = query.filter(BuildRun.config_profile_id == config_id)
+    return query.order_by(BuildRun.id.desc()).first()
+
+
+def _planet(session) -> StageStatus:
+    planet = downloads.resolve_version(session, PLANET_KEY)
+    if planet is None or planet.status != "approved":
+        return StageStatus("todo", "No approved planet yet.")
+    age = _age_days(planet.data_timestamp)
+    stamp = (planet.data_timestamp or planet.fetched_at.strftime("%Y-%m-%d"))[:10]
+    if age is not None and age > STALE_DAYS:
+        return StageStatus("outdated", f"Planet data of {stamp} is {age} days old; check for a newer one.")
+    return StageStatus("ok", f"Planet data of {stamp}.")
+
+
+def _tiles(session) -> StageStatus:
+    build = downloads.resolve_version(session, TILES_KEY)
+    if build is None or build.status != "approved":
+        return StageStatus("todo", "No approved tiles build yet.")
+    age = _age_days(build.data_timestamp)
+    stamp = (build.data_timestamp or build.fetched_at.strftime("%Y-%m-%d"))[:10]
+    if age is not None and age > TILES_STALE_DAYS:
+        return StageStatus("outdated", f"Tiles build of {stamp} is {age} days old; check for a newer one.")
+    return StageStatus("ok", f"Protomaps build of {stamp}.")
+
+
+def _countries(session, resolved) -> StageStatus:
+    paths = planned_paths(resolved)
+    planet = downloads.resolve_version(session, PLANET_KEY)
+    found = {p: assets.current(session, None, "country-pbf", p) for p in paths}
+    if not any(found.values()):
+        return StageStatus("todo", f"{len(paths)} countries to cut from the planet.")
+    stale = [p for p, a in found.items()
+             if a is None or (planet is not None and a.meta_json.get("planet_record_id") != planet.id)]
+    if stale:
+        return StageStatus("outdated", f"{len(stale)} of {len(paths)} countries are missing or were cut from an older planet.")
+    return StageStatus("ok", f"{len(paths)} countries, cut from planet {planet.version_label if planet else '?'}.")
+
+
+def _geofabrik(session, resolved) -> StageStatus:
+    paths = planned_paths(resolved)
+    missing = [p for p in paths if downloads.latest_approved(session, osm_source_key(p)) is None]
+    if len(missing) == len(paths):
+        return StageStatus("todo", f"{len(paths)} extracts to download.")
+    if missing:
+        return StageStatus("outdated", f"{len(missing)} of {len(paths)} extracts are not downloaded.")
+    return StageStatus("ok", f"{len(paths)} extracts downloaded.")
+
+
+def _polygons(session, config_id, resolved) -> StageStatus:
+    newest = (
+        session.query(Asset)
+        .filter(Asset.config_profile_id == config_id, Asset.asset_type == "core-polygon", Asset.status == "approved")
+        .order_by(Asset.id.desc()).first()
+    )
+    if newest is None:
+        return StageStatus("todo", "No approved polygons yet.")
+    if newest.meta_json.get("fingerprint") != polygons_fingerprint(resolved):
+        return StageStatus("outdated", "Regions, overlap or carved countries changed since the polygons were made.")
+    return StageStatus("ok", "Polygons match the current regions.")
+
+
+def _region_is_current(asset, plan) -> bool:
+    """Compare a built region with what it would be built from now. Files made before fingerprints were
+    recorded are compared by the country files and overlap polygon their meta lists."""
+    stored = asset.meta_json.get("fingerprint")
+    if stored:
+        return stored == region_fingerprint(plan)
+    countries = asset.meta_json.get("country_asset_ids")
+    if countries is None:
+        return False  # no record of its inputs (e.g. built from Geofabrik downloads before fingerprints)
+    now = sorted(i.asset.id for i in plan.inputs if i.asset is not None)
+    return countries == now and asset.meta_json.get("overlap_polygon_asset_id") == (plan.overlap_poly.id if plan.overlap_poly else None)
+
+
+def _regions(session, config_id, resolved) -> StageStatus | None:
+    plans, problems = plan_inputs(session, config_id, resolved)
+    if problems or not plans:
+        return None
+    built, stale = [], []
+    for plan in plans:
+        current = assets.current(session, config_id, "osm-pbf", plan.slug)
+        if current is None:
+            stale.append(f"{plan.name} (not built)")
+        else:
+            built.append(plan.name)
+            if not _region_is_current(current, plan):
+                stale.append(plan.name)
+    if not built:
+        return StageStatus("todo", f"{len(plans)} region(s) to build.")
+    if stale:
+        return StageStatus("outdated", "Needs a run: " + ", ".join(stale) + ".")
+    return StageStatus("ok", f"{len(plans)} region(s) built from the current inputs.")
+
+
+def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str, str | None]) -> dict[str, StageStatus]:
+    content = {
+        "download-planet": lambda: _planet(session),
+        "download-tiles": lambda: _tiles(session),
+        "extract-countries": lambda: _countries(session, resolved),
+        "download-osm": lambda: _geofabrik(session, resolved),
+        "polygons": lambda: _polygons(session, config_id, resolved),
+        "osm-extract": lambda: _regions(session, config_id, resolved),
+    }
+    result = {}
+    for key, build in content.items():
+        run = _latest_run(session, key, config_id)
+        reason = blocked.get(key)
+        if run is not None and run.status in ("queued", "running"):
+            result[key] = StageStatus("running", f"Run {run.id} is {run.status}.", run.id)
+        elif run is not None and run.status == "awaiting_review":
+            result[key] = StageStatus("review", f"Run {run.id} finished; approve or reject it.", run.id)
+        elif reason:
+            result[key] = StageStatus("blocked", reason)
+        else:
+            status = build() or StageStatus("blocked", "Inputs are not ready.")
+            if run is not None and run.status == "failed" and status.state != "ok":
+                status = StageStatus("failed", f"Run {run.id}: {(run.error_message or 'failed')[:160]}", run.id)
+            result[key] = status
+    return result

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty_state %}
+{% block title %}Configure{% endblock %}
+{% block header %}{% set profiles = [] %}{% set current = none %}{% include "configure/_header.html" %}{% endblock %}
+{% block content %}
+{{ empty_state("No configurations yet. Create your first one with “New Configuration”.") }}
+<div id="modal-slot"></div>
+<script src="{{ url_for('configure.static', filename='dialog.js') }}"></script>
+{% endblock %}

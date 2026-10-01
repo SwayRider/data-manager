@@ -1,0 +1,27 @@
+{% set summary = run.report_json.get('summary') %}
+{% set file = run.report_json.get('file') %}
+<p>{{ summary.label or 'Planet' }} {{ summary.version }}: <span class="badge status-{{ 'downloaded' if summary.status in ('downloaded', 'imported') else 'unchanged' }}">{{ summary.status }}</span>
+  {{ summary.size_bytes|filesize }}{% if summary.data_timestamp %}, data of {{ summary.data_timestamp[:10] }}{% if summary.age_days is not none %} ({{ summary.age_days }} days old){% endif %}{% endif %};
+  {% if summary.md5_ok %}md5 verified{% else %}md5 not checked{% endif %};
+  keeping the newest {{ summary.kept }} version(s){% if summary.pruned %}, removed {{ summary.pruned }} older{% endif %}.</p>
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+<table class="resolved-table">
+  <tr><th>Source</th><td><code>{{ file.url }}</code></td></tr>
+  <tr><th>File</th><td>{{ file.filename }}</td></tr>
+  <tr><th>Fetched</th><td>{{ file.fetched_at }} UTC</td></tr>
+  <tr><th>Last-Modified</th><td>{{ file.upstream_modified or '' }}</td></tr>
+  <tr><th>ETag</th><td><code>{{ file.etag or '' }}</code></td></tr>
+  <tr><th>SHA-256</th><td><code>{{ file.sha256 }}</code></td></tr>
+  <tr><th>Previous version</th><td>{{ file.previous_version or 'none' }}</td></tr>
+</table>
+{% set tiles = run.report_json.get('tiles') %}
+{% if tiles %}
+<table class="resolved-table">
+  <tr><th>Zoom</th><td>{{ tiles.min_zoom }}–{{ tiles.max_zoom }}</td></tr>
+  <tr><th>Bounds</th><td>{{ tiles.bounds|join(', ') }}</td></tr>
+  <tr><th>Layers</th><td>{{ tiles.layers|join(', ') }}</td></tr>
+  <tr><th>Tiles</th><td>{{ tiles.addressed_tiles }} addressed, {{ tiles.compression }} compressed</td></tr>
+  <tr><th>Schema / name</th><td>{{ tiles.schema_version or '' }} {{ tiles.name or '' }}</td></tr>
+  <tr><th>Attribution</th><td>{{ tiles.attribution or '' }}</td></tr>
+</table>
+{% endif %}

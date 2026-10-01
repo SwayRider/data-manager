@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} · datamanager</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+<div class="shell">
+  <header class="shell-header">
+    <a class="brand" href="{{ url_for('main.index') }}">datamanager</a>
+    {% block header %}{% endblock %}
+  </header>
+  <nav class="shell-nav" aria-label="Sections">
+    {% from "_macros.html" import nav_link %}
+    <div>{% for item in nav_top %}{{ nav_link(item, active_section, nav_warnings) }}{% endfor %}</div>
+    <div>{% for item in nav_bottom %}{{ nav_link(item, active_section, nav_warnings) }}{% endfor %}</div>
+  </nav>
+  <main class="shell-content">{% block content %}{% endblock %}</main>
+</div>
+</body>
+</html>

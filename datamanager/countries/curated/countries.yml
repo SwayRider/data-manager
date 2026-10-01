@@ -1,0 +1,79 @@
+# Hand-curated per-country reference data that cannot be derived from
+# Natural Earth geometry alone: Geofabrik's per-country URL path, WhosOnFirst
+# code exceptions, and OpenAddresses source file lists.
+#
+# The catalog seeds every Natural Earth country; this file only adds the
+# build data for the ones we can actually build (a country without an entry
+# here has no geofabrik_path and is display-only). Currently curated: the 6 countries referenced by
+# data-pipeline/config/config-mini.yml (benelux/france/germany), verified
+# field-by-field against that file.
+#
+# Optional per-country key `osm_locality_levels`: the OSM admin_level(s) holding
+# sub-municipal localities (BE 9, NL 10, DE 9+10, ...). It differs per country, so it is
+# only set where measured; unset = Who's On First boundaries are used unchanged.
+#
+# Open risk (see DESIGN.md #1): data-pipeline/config/config-dev.yml
+# references 49 distinct ISO2 codes across its 8 regions. Extending this
+# file to cover the remaining ~43 is real, one-time curation work against
+# Geofabrik's directory listing and the OpenAddresses source index — not
+# something to auto-derive or guess at. Each addition should be verified
+# against config-dev.yml the same way these 6 were verified against
+# config-mini.yml.
+
+be:
+  geofabrik_path: europe/belgium
+  osm_locality_levels: [9]
+  wof_code: be
+  openaddresses_files:
+    - be/bru/bosa-region-brussels-fr
+    - be/bru/bosa-region-brussels-nl
+    - be/vlg/bosa-region-flanders-fr
+    - be/vlg/bosa-region-flanders-nl
+    - be/wal/bosa-region-wallonia-de
+    - be/wal/bosa-region-wallonia-fr
+
+lu:
+  geofabrik_path: europe/luxembourg
+  osm_locality_levels: [9]
+  wof_code: lu
+  openaddresses_files:
+    - lu/countrywide
+
+nl:
+  geofabrik_path: europe/netherlands
+  osm_locality_levels: [10]
+  wof_code: nl
+  openaddresses_files:
+    - nl/countrywide
+
+fr:
+  geofabrik_path: europe/france
+  wof_code: fr
+  openaddresses_files:
+    - fr/countrywide
+
+mc:
+  geofabrik_path: europe/monaco
+  wof_code: mc
+  openaddresses_files: []
+
+de:
+  geofabrik_path: europe/germany
+  osm_locality_levels: [9, 10]
+  wof_code: de
+  openaddresses_files:
+    - de/bb/statewide
+    - de/bw/statewide
+    - de/hb/statewide
+    - de/he/statewide
+    - de/hh/statewide
+    - de/nw/statewide
+    - de/rp/statewide
+    - de/sh/statewide
+    - de/sl/statewide
+    - de/sn/statewide
+    - de/st/statewide
+    - de/th/statewide
+    - de/ni/statewide
+    - de/mv/statewide
+    - de/berlin

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('build.index') }}">&larr; Build</a></p>
+<script src="{{ url_for('build.static', filename='polymap.js') }}"></script>
+{% include "build/_run.html" %}
+{% endblock %}

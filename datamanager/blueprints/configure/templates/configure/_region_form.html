@@ -1,0 +1,23 @@
+<dialog class="modal">
+  <form hx-post="{{ action }}" hx-target="#modal-slot">
+    <h2>{{ title }}</h2>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <label>Name
+      <input name="name" value="{{ values.name }}" maxlength="100" required autofocus
+             {% if error_field == 'name' %}aria-invalid="true"{% endif %}>
+    </label>
+    <label>Color
+      <input name="color" type="color" value="{{ values.color }}" class="color-input"
+             {% if error_field == 'color' %}aria-invalid="true"{% endif %}>
+    </label>
+    <div class="form-actions">
+      {% if region %}
+      <button type="button" class="danger"
+              hx-post="{{ url_for('configure.region_delete', config_id=config_id, region_id=region.id) }}"
+              hx-confirm="Delete region {{ region.name }}?">Delete</button>
+      {% endif %}
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>

@@ -1,0 +1,35 @@
+{% set summary = run.report_json.get('summary') %}
+{% set polys = run.report_json.get('polygons', []) %}
+{% if summary %}
+<p>{{ summary.polygons }} polygon(s):
+  {% for kind, n in summary.by_kind.items() if n %}{{ n }} {{ kind }}{{ ', ' if not loop.last }}{% endfor %};
+  {{ summary.vertices }} vertices in total; {{ summary.invalid }} invalid.</p>
+{% endif %}
+<div id="poly-map" class="poly-map"></div>
+<p class="legend muted">
+  <span class="swatch" style="background:#2563eb"></span> core ·
+  <span class="swatch" style="background:#e08a00"></span> overlap (100 km) ·
+  <span class="swatch" style="background:#c62828"></span> border (10 km) ·
+  <span class="swatch" style="background:#2e7d32"></span> carve. Click a row to zoom to it.
+</p>
+<script type="application/json" id="poly-data">{{ polys|selectattr('preview')|list|tojson }}</script>
+<table class="resolved-table">
+  <tr><th>Polygon</th><th>Kind</th><th>Regions</th><th>Countries</th><th>Area</th><th>Vertices</th><th>Bounding box</th><th>File</th><th>Checks</th></tr>
+  {% for p in polys %}
+  <tr data-poly="{{ p.name }}" style="cursor:pointer">
+    <td>{{ p.name }}</td>
+    <td>{{ p.kind }}</td>
+    <td>{{ p.regions|join(', ') }}</td>
+    <td>{{ p.countries|join(', ') }}</td>
+    <td>{{ '{:,}'.format(p.area_km2) }} km²</td>
+    <td>{{ p.vertices }}</td>
+    <td>{% if p.bbox %}<code>{{ p.bbox|join(', ') }}</code>{% endif %}</td>
+    <td>{% if p.poly_bytes %}{{ p.poly_bytes|filesize }} <code title="{{ p.sha256 }}">{{ p.sha256[:8] }}</code>{% endif %}</td>
+    <td>
+      {% if p.valid %}valid{% if p.fixed %} <span class="warn-line">(repaired)</span>{% endif %}
+      {% else %}<span class="error">{{ p.message }}</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<script>if (window.initPolyMap) initPolyMap();</script>

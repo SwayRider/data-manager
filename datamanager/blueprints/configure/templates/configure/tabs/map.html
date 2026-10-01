@@ -1,0 +1,43 @@
+<div class="map-layout">
+  <aside id="region-panel" data-config-id="{{ current.id }}">
+    <h3>Regions</h3>
+    <ul id="region-list">
+      {% for region in regions %}
+      <li data-region-id="{{ region.id }}" data-name="{{ region.name }}" data-color="{{ region.color }}">
+        <button type="button" class="region-select">
+          <span class="swatch" style="background: {{ region.color }}"></span>{{ region.name }}
+        </button>
+        <button type="button" class="region-edit" title="Edit region" aria-label="Edit {{ region.name }}"
+                hx-get="{{ url_for('configure.region_edit', config_id=current.id, region_id=region.id) }}"
+                hx-target="#modal-slot">✎</button>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if not regions %}<p class="muted">No regions yet.</p>{% endif %}
+    <button type="button" class="primary"
+            hx-get="{{ url_for('configure.region_new', config_id=current.id) }}" hx-target="#modal-slot">Add</button>
+    <div id="region-info"></div>
+    <p class="legend muted">Solid = core · hatched = overlap · dashed line = 100 km around the core</p>
+  </aside>
+  <div>
+    <div id="country-map" data-url="{{ url_for('countries.geojson') }}"
+         data-details-url="{{ url_for('countries.details', iso2='__ISO__') }}"
+         data-assignments-url="{{ url_for('configure.region_assignments', config_id=current.id) }}"
+         data-overlap-url="{{ url_for('configure.region_overlap', config_id=current.id) }}"
+         data-buffer-url="{{ url_for('configure.region_buffer', config_id=current.id, region_id=0) }}"
+         data-override-url="{{ url_for('configure.region_set_overlap', config_id=current.id, region_id=0, iso2='__ISO__') }}"
+         data-carves-url="{{ url_for('configure.carves', config_id=current.id) }}"
+         data-carve-url="{{ url_for('configure.carve_set', config_id=current.id, iso2='__ISO__') }}"
+         data-region-url="{{ url_for('configure.region_add_country', config_id=current.id, region_id=0, iso2='__ISO__') }}"></div>
+    <p id="carve-bar" class="muted" hidden>
+      <span id="carve-text"></span>
+      <button type="button" id="carve-finish" class="primary">Finish</button>
+      <button type="button" id="carve-undo">Undo point</button>
+      <button type="button" id="carve-cancel">Cancel</button>
+    </p>
+    <p id="map-empty" class="muted" hidden>
+      The country catalog is empty. Run <code>flask seed-countries</code> to populate it.
+    </p>
+  </div>
+</div>
+<script src="{{ url_for('configure.static', filename='map.js') }}"></script>

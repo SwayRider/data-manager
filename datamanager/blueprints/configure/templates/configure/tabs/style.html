@@ -1,0 +1,47 @@
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4/dist/maplibre-gl.css">
+<div class="tiles-layout">
+  <aside>
+    <h3>Map style</h3>
+    <p class="muted">Ready-made Protomaps styles; label levels are patched into them. The preview reads the approved Protomaps planet build (Build → Download tiles).</p>
+    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    <form hx-post="{{ url_for('configure.style_settings', config_id=current.id) }}" hx-target="#tab-content">
+      <label>Light style
+        <select name="light_style" id="light_style">
+          {% for s in light_styles %}<option value="{{ s.key }}" {{ 'selected' if s.key == settings.light_style }}>{{ s.label }}</option>{% endfor %}
+        </select></label>
+      <label>Dark style
+        <select name="dark_style" id="dark_style">
+          {% for s in dark_styles %}<option value="{{ s.key }}" {{ 'selected' if s.key == settings.dark_style }}>{{ s.label }}</option>{% endfor %}
+        </select></label>
+      <fieldset class="extent">
+        <legend>Label appears from zoom</legend>
+        <p class="muted">Empty = the style's own value (shown greyed). A label can't appear before the tile data carries it.</p>
+        {% for key, label in label_keys.items() %}
+        <label class="label-row">{{ label }}
+          <input type="number" min="0" max="22" name="label_{{ key }}" data-key="{{ key }}" value="{{ settings.labels.get(key, '') }}"></label>
+        {% endfor %}
+      </fieldset>
+      <div class="form-actions"><button type="submit" class="primary">Save</button></div>
+    </form>
+    <p class="muted">
+      <a href="{{ url_for('configure.style_light', config_id=current.id) }}">Download light style.json</a> ·
+      <a href="{{ url_for('configure.style_dark', config_id=current.id) }}">Download dark style.json</a>
+    </p>
+  </aside>
+  <div id="style-preview" data-preview-url="{{ url_for('configure.style_preview', config_id=current.id, key='__KEY__') }}">
+    <div class="preview-bar">
+      <button type="button" data-mode="light" class="primary">Light</button>
+      <button type="button" data-mode="dark">Dark</button>
+      <span class="muted">zoom <strong id="preview-zoom">–</strong></span>
+      <span class="spacer"></span>
+      <button type="button" data-jump="4.35,50.85">Brussels</button>
+      <button type="button" data-jump="4.9,52.37">Amsterdam</button>
+      <button type="button" data-jump="2.35,48.86">Paris</button>
+      <button type="button" data-jump="13.4,52.52">Berlin</button>
+    </div>
+    <div id="style-map"></div>
+    <p id="style-notice" class="error" hidden>No approved tiles yet: run Build → Download tiles and approve it to see the preview.</p>
+    <p class="muted">Try zoom 5–10 around a city to judge when towns and villages show up.</p>
+  </div>
+</div>
+<script src="{{ url_for('configure.static', filename='style.js') }}"></script>

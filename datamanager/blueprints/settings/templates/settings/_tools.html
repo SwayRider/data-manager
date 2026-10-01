@@ -1,0 +1,43 @@
+<div id="tools-block">
+  <p>
+    {% if required_bad %}<span class="badge warn">{{ required_bad|length }} required tool{{ 's' if required_bad|length != 1 }} missing</span> {{ required_bad|join(', ') }}.
+    {% else %}<span class="badge">all required tools found</span>{% endif %}
+    {% if optional_bad %}<span class="muted">Optional / later: {{ optional_bad|join(', ') }}.</span>{% endif %}
+    <button hx-post="{{ url_for('settings.tools_detect_all') }}" hx-target="#tools-block" hx-swap="outerHTML">Re-detect all</button>
+  </p>
+  <p class="muted">Install a missing tool (commands below), then press Re-detect. Tools outside the PATH can be pointed to with a custom path.</p>
+  {% if tools_error %}<p class="error">{{ tools_error }}</p>{% endif %}
+  <table class="resolved-table tools-table">
+    <thead><tr><th>Tool</th><th>Status</th><th>Found</th><th>Needed by</th><th>Custom path</th><th></th></tr></thead>
+    {% for tool, s in rows %}
+    <tbody id="tool-{{ tool.key }}">
+      <tr>
+        <td>{{ tool.label }}{% if not tool.required %} <span class="muted">(optional)</span>{% endif %}</td>
+        <td>{% if s.status == 'ok' %}<span class="badge">ok</span>
+            {% elif s.status == 'outdated' %}<span class="badge warn">outdated</span>
+            {% elif s.status == 'error' %}<span class="badge warn">error</span>
+            {% else %}<span class="badge {{ 'warn' if tool.required }}">not found</span>{% endif %}
+            {% if s.message %}<div class="muted">{{ s.message }}</div>{% endif %}</td>
+        <td>{% if s.path %}<code>{{ s.path }}</code>{% if s.version %} <span class="muted">{{ s.version }}</span>{% endif %}{% endif %}</td>
+        <td class="muted">{{ tool.needed_by }}</td>
+        <td>
+          <form class="add-region" hx-post="{{ url_for('settings.tool_path', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML">
+            <input name="path" value="{{ s.override or '' }}" placeholder="{{ tool.default_file or '/path/to/' ~ (tool.binaries[0] if tool.binaries else tool.key) }}">
+            <button type="submit">Set</button>
+          </form>
+        </td>
+        <td><button hx-post="{{ url_for('settings.tool_detect', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML">Re-detect</button></td>
+      </tr>
+      {% if s.status != 'ok' %}
+      <tr><td colspan="6">
+        <details {{ 'open' if s.status == 'missing' and tool.required }}><summary>How to install on Debian</summary>
+          {% if tool.apt %}<pre>sudo apt install {{ tool.apt.split(' ')[0] }}</pre>{% endif %}
+          {% if tool.install_help %}<p class="muted">{{ tool.install_help }}</p>{% endif %}
+        </details>
+      </td></tr>
+      {% endif %}
+    </tbody>
+    {% endfor %}
+  </table>
+  <p class="muted">Valhalla and the Pelias repositories are built by data-manager itself (not detected here).</p>
+</div>

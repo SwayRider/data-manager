@@ -1,0 +1,40 @@
+<dialog class="modal">
+  <form hx-post="{{ url_for('countries.save', iso2=country.iso2) }}" hx-target="#modal-slot">
+    <h2>{{ country.name }} <small class="muted">({{ country.iso2|upper }})</small></h2>
+    <p class="muted">
+      {% if country.is_curated %}Configured — selectable in regions.{% else %}Not configured yet — add a Geofabrik path to make it selectable.{% endif %}
+    </p>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+
+    <dl class="facts">
+      <dt>Bounding box (lon/lat)</dt><dd>{{ country.bbox_json|join(", ") }}</dd>
+      <dt>SRTM box (lat, lon)</dt><dd>{{ country.srtm_bbox_json|join(", ") }}</dd>
+    </dl>
+
+    <label>Geofabrik path
+      <input name="geofabrik_path" value="{{ values.geofabrik_path }}" placeholder="europe/belgium"
+             class="{{ 'invalid' if error_field == 'geofabrik_path' }}">
+      {% if pbf_url %}<small><a href="{{ pbf_url }}" target="_blank" rel="noopener">{{ pbf_url }}</a></small>{% endif %}
+    </label>
+    <label class="inline"><input type="checkbox" name="skip_verify" value="1"> Skip download checks (Geofabrik / OpenAddresses)</label>
+    <label>WOF code
+      <input name="wof_code" value="{{ values.wof_code }}" maxlength="10">
+    </label>
+    <fieldset class="sources">
+      <legend>Address sources</legend>
+      <p class="muted source-osm">
+        OpenStreetMap — {% if country.geofabrik_path %}from the Geofabrik extract{% else %}available once a Geofabrik path is set{% endif %}
+      </p>
+      {% for source in sources %}{% include source.form_template %}{% endfor %}
+    </fieldset>
+    <fieldset class="sources">
+      <legend>Locality boundaries</legend>
+      <p class="muted source-osm">Used to assign towns to addresses. Empty = Who's On First boundaries are used unchanged.</p>
+      {% for source in boundary_sources %}{% include source.form_template %}{% endfor %}
+    </fieldset>
+    <div class="form-actions">
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>

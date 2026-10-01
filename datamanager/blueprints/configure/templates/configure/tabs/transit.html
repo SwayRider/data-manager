@@ -1,0 +1,12 @@
+<div class="resolved">
+  <p class="muted">
+    GTFS feeds per region (public transport timetables for the Pelias transit layer). Feeds are downloaded in the order listed.
+    Some publishers need a registration or API key; paste the direct download URL.
+  </p>
+  {% set config_id = current.id %}
+  {% for region in resolved.regions %}
+    {% include "configure/_transit_region.html" %}
+  {% else %}
+  <p class="empty-state">No regions yet — add regions and countries on the Map tab.</p>
+  {% endfor %}
+</div>

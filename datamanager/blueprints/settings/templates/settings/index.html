@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+
+<h2>Global settings</h2>
+{% include "settings/_form.html" %}
+
+<h2>Required tools</h2>
+{% include "settings/_tools.html" %}
+
+<h2>Bootstrap configuration</h2>
+<p class="muted">Read-only; set via environment / <code>.env</code>.</p>
+<table>
+  {% for key, value in bootstrap.items() %}
+  <tr><th>{{ key }}</th><td><code>{{ value }}</code></td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

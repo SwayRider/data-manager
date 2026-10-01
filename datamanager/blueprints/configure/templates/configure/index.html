@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Configure · {{ current.name }}{% endblock %}
+{% block header %}{% include "configure/_header.html" %}{% endblock %}
+{% block content %}
+{% if current.description %}<p class="muted config-description">{{ current.description }}</p>{% endif %}
+{% if tabs|length > 1 %}<nav class="tabs" aria-label="Configuration sections">
+  {% for key, label in tabs %}
+  <a href="{{ url_for('configure.tab', config_id=current.id, tab=key) }}"
+     hx-get="{{ url_for('configure.tab', config_id=current.id, tab=key) }}" hx-target="#tab-content" hx-push-url="true"
+     hx-on::before-request="this.parentElement.querySelectorAll('a').forEach(a => a.classList.remove('active')); this.classList.add('active')"
+     class="{{ 'active' if key == active_tab }}">{{ label }}</a>
+  {% endfor %}
+</nav>{% endif %}
+<div id="tab-content">{% include tab_template %}</div>
+<div id="modal-slot"></div>
+<script src="{{ url_for('configure.static', filename='dialog.js') }}"></script>
+{% endblock %}

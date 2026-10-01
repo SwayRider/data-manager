@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Downloads{% endblock %}
+{% block content %}
+<h1>Build</h1>
+<nav class="tabs" aria-label="Build sections">
+  <a href="{{ url_for('build.index') }}">Stages</a>
+  <a href="{{ url_for('build.downloads_index') }}" class="active">Downloads</a>
+</nav>
+{% include "build/_downloads.html" %}
+{% endblock %}

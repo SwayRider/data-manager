@@ -1,0 +1,15 @@
+<select aria-label="Configuration" onchange="location.href = this.value" {% if not profiles %}disabled{% endif %}>
+  {% for p in profiles %}
+  <option value="{{ url_for('configure.tab', config_id=p.id, tab=active_tab or 'map') }}"
+          {{ 'selected' if current and p.id == current.id }}>{{ p.name }}</option>
+  {% else %}
+  <option>no configurations yet</option>
+  {% endfor %}
+</select>
+<button type="button" hx-get="{{ url_for('configure.new') }}" hx-target="#modal-slot">New Configuration</button>
+{% if current %}
+<button type="button" hx-get="{{ url_for('configure.edit', config_id=current.id) }}" hx-target="#modal-slot">Edit</button>
+<button type="button" hx-post="{{ url_for('configure.duplicate', config_id=current.id) }}">Duplicate</button>
+<button type="button" class="danger" hx-post="{{ url_for('configure.delete', config_id=current.id) }}"
+        hx-confirm="Delete configuration '{{ current.name }}'?">Delete</button>
+{% endif %}

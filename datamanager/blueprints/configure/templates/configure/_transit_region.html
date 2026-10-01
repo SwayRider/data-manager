@@ -1,0 +1,27 @@
+<section class="resolved-region">
+  <h3><span class="swatch" style="background: {{ region.color }}"></span>{{ region.name }}
+    <span class="badge">{{ region.gtfs_feeds|length }} feed{{ 's' if region.gtfs_feeds|length != 1 }}</span></h3>
+  {% if region.gtfs_feeds %}
+  <table class="resolved-table">
+    <thead><tr><th>Label</th><th>URL</th><th></th></tr></thead>
+    <tbody>
+    {% for f in region.gtfs_feeds %}
+    <tr>
+      <td>{{ f.label or '—' }}</td>
+      <td><a href="{{ f.url }}" rel="noopener noreferrer" target="_blank">{{ f.url }}</a></td>
+      <td><button type="button" class="danger"
+                  hx-post="{{ url_for('configure.region_gtfs_delete', config_id=config_id, region_id=region.region_id, feed_id=f.id) }}"
+                  hx-target="closest section" hx-swap="outerHTML">Remove</button></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="muted">No feeds — transit stops are not added to this region's geocoder.</p>{% endif %}
+  <form class="add-region gtfs-form" hx-post="{{ url_for('configure.region_gtfs_add', config_id=config_id, region_id=region.region_id) }}"
+        hx-target="closest section" hx-swap="outerHTML">
+    <input type="text" name="url" placeholder="https://…/gtfs.zip" value="{{ gtfs_values.get('url', '') }}" aria-label="GTFS feed URL" required>
+    <input type="text" name="label" placeholder="Label (optional)" value="{{ gtfs_values.get('label', '') }}" aria-label="Label" maxlength="100">
+    <button type="submit" class="primary">Add feed</button>
+  </form>
+  {% if gtfs_error %}<p class="error">{{ gtfs_error }}</p>{% endif %}
+</section>

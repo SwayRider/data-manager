@@ -1,0 +1,5 @@
+<label class="inline">
+  <input type="checkbox" name="geonames_postal_enabled" value="1" {{ 'checked' if values.geonames_postal_enabled }}>
+  GeoNames postal codes (postcode → place name)
+  <small class="muted">{{ "— available for this country" if geonames_has_postal else "— no GeoNames postal file for this country" }}</small>
+</label>

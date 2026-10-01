@@ -1,0 +1,16 @@
+<dialog class="modal">
+  <form hx-post="{{ action }}" hx-target="#modal-slot">
+    <h2>{{ title }}</h2>
+    {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+    <label>Name
+      <input name="name" value="{{ values.name }}" maxlength="100" required autofocus>
+    </label>
+    <label>Description
+      <textarea name="description" rows="4">{{ values.description }}</textarea>
+    </label>
+    <div class="form-actions">
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>

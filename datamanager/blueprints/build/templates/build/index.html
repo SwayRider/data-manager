@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Build{% endblock %}
+{% block content %}
+<h1>Build</h1>
+<nav class="tabs" aria-label="Build sections">
+  <a href="{{ url_for('build.index') }}" class="active">Stages</a>
+  <a href="{{ url_for('build.downloads_index') }}">Downloads</a>
+</nav>
+{% if not config %}
+<p class="empty-state">Create a configuration first (Configure), then run stages for it here.</p>
+{% else %}
+<form method="get" class="inline-form" style="margin:0 0 1rem">
+  <label>Configuration
+    <select name="config" onchange="this.form.submit()">
+      {% for c in configs %}<option value="{{ c.id }}" {{ 'selected' if c.id == config.id }}>{{ c.name }}</option>{% endfor %}
+    </select>
+  </label>
+</form>
+
+<p class="legend muted stage-legend">
+  {% for state, glyph, text in [('ok', '✓', 'up to date'), ('outdated', '↻', 'outdated, run again'), ('todo', '▶', 'ready, not run yet'), ('review', '?', 'waiting for review'), ('running', '…', 'running'), ('failed', '✕', 'last run failed'), ('blocked', '–', 'blocked by a prerequisite')] %}
+  <span class="stage-dot dot-{{ state }}">{{ glyph }}</span> {{ text }}{{ ' · ' if not loop.last }}
+  {% endfor %}
+</p>
+{% for key, title, description in stages %}
+<section class="stage-card">
+  {% set st = statuses[key] %}
+  {% set glyph = {'ok': '✓', 'outdated': '↻', 'todo': '▶', 'review': '?', 'running': '…', 'failed': '✕', 'blocked': '–'}[st.state] %}
+  <h3>{% if st.run_id %}<a class="stage-dot dot-{{ st.state }}" href="{{ url_for('build.run_detail', run_id=st.run_id) }}" title="{{ st.label }}: open run {{ st.run_id }}" aria-label="{{ st.label }}: open run {{ st.run_id }}">{{ glyph }}</a>{% else %}<span class="stage-dot dot-{{ st.state }}" title="{{ st.label }}" aria-label="{{ st.label }}">{{ glyph }}</span>{% endif %} {{ title }}</h3>
+  <p class="stage-status status-text-{{ st.state }}"><strong>{{ st.label }}.</strong> {{ st.detail }}</p>
+  <p class="muted">{{ description }}</p>
+  <form method="post" action="{{ url_for('build.start', stage_key=key, config=config.id) }}">
+    {% if key == 'download-planet' or key == 'download-tiles' %}
+    <p class="muted">{% set info = planet if key == 'download-planet' else tiles %}{% if info %}Current {{ 'planet' if key == 'download-planet' else 'tiles build' }}: {{ info.version }}{% if info.data %}, data of {{ info.data[:10] }}{% endif %}, {{ info.size|filesize }}.{% else %}No approved {{ 'planet' if key == 'download-planet' else 'tiles build' }} yet.{% endif %}</p>
+    <label class="inline"><input type="checkbox" name="use_existing" value="1"> Use the one I already have (do not check for a newer one)</label><br>
+    <label>Or register a file already on disk (used in place, never deleted):
+      <input name="local_file" placeholder="{{ '/path/to/planet-latest.osm.pbf' if key == 'download-planet' else '/path/to/20260930.pmtiles' }}" style="min-width:24rem"></label>
+    {% endif %}
+    {% if key == 'osm-extract' and region_names|length > 1 %}
+    <fieldset class="regions-pick"><legend class="muted">Regions (none ticked = all)</legend>
+      {% for name in region_names %}<label class="inline"><input type="checkbox" name="regions" value="{{ name }}"> {{ name }}</label> {% endfor %}
+    </fieldset>
+    {% endif %}
+    <button class="primary" {{ 'disabled' if states[key] }}>Run</button>
+    {% if states[key] %}<span class="muted">{{ states[key] }}</span>{% endif %}
+  </form>
+</section>
+{% endfor %}
+
+<h2>Runs</h2>
+{% if runs %}
+<table class="resolved-table">
+  <tr><th>#</th><th>Stage</th><th>Status</th><th>Started</th><th>Finished</th></tr>
+  {% for r in runs %}
+  <tr>
+    <td><a href="{{ url_for('build.run_detail', run_id=r.id) }}">{{ r.id }}</a></td>
+    <td>{{ r.stage_key }}</td>
+    <td><span class="badge status-{{ r.status }}">{{ r.status.replace('_', ' ') }}</span></td>
+    <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else '' }}</td>
+    <td>{{ r.finished_at.strftime('%Y-%m-%d %H:%M') if r.finished_at else '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">No runs yet.</p>{% endif %}
+{% endif %}
+{% endblock %}
