@@ -13,6 +13,7 @@ from datamanager.models import Asset, BuildRun
 from datamanager.services import assets, downloads
 from datamanager.stages.download_osm import osm_source_key, planned_paths
 from datamanager.stages.download_planet import PLANET_KEY, STALE_DAYS, _age_days
+from datamanager.stages.border import border_fingerprint, plan_inputs as border_inputs
 from datamanager.stages.download_srtm import planned_tiles, srtm_fingerprint
 from datamanager.stages.download_tiles import STALE_DAYS as TILES_STALE_DAYS, TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
@@ -122,6 +123,26 @@ def _srtm(session, config_id, resolved) -> StageStatus:
     return StageStatus("ok", f"{summary.get('tiles', len(names))} tiles ({summary.get('missing', 0)} over open sea).")
 
 
+def _border(session, config_id, resolved) -> StageStatus | None:
+    plan = border_inputs(session, config_id, resolved)
+    if plan.problems or not plan.regions:
+        return None
+    newest = (
+        session.query(Asset)
+        .filter(Asset.config_profile_id == config_id, Asset.asset_type == "region-outline", Asset.status == "approved")
+        .order_by(Asset.id.desc()).first()
+    )
+    if newest is None:
+        return StageStatus("todo", f"{len(plan.regions)} region outline(s) and {len(plan.pairs)} border pair(s) to build.")
+    stale = [r.name for r in plan.regions
+             if (a := assets.current(session, config_id, "region-outline", f"{r.slug}-core")) is None or a.meta_json.get("fingerprint") != r.fingerprint]
+    stale += [p.name for p in plan.pairs
+              if (a := assets.current(session, config_id, "border-crossings", p.name)) is None or a.meta_json.get("fingerprint") != p.fingerprint]
+    if stale:
+        return StageStatus("outdated", "Needs a run: " + ", ".join(stale) + ".")
+    return StageStatus("ok", f"{len(plan.regions)} outline(s) and {len(plan.pairs)} pair(s) match the current region PBFs.")
+
+
 def _styles(session, config_id) -> StageStatus:
     newest = (
         session.query(Asset)
@@ -176,6 +197,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "download-osm": lambda: _geofabrik(session, resolved),
         "polygons": lambda: _polygons(session, config_id, resolved),
         "download-srtm": lambda: _srtm(session, config_id, resolved),
+        "border": lambda: _border(session, config_id, resolved),
         "styles": lambda: _styles(session, config_id),
         "osm-extract": lambda: _regions(session, config_id, resolved),
     }

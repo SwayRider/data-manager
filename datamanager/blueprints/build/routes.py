@@ -6,6 +6,7 @@ from datamanager.models import DownloadRecord
 from datamanager.services import config_profiles as profiles
 from datamanager.services import downloads, resolve, runs
 from datamanager.services import settings as settings_service
+from datamanager.stages.border import plan_inputs as border_inputs
 from datamanager.stages.download_osm import planned_paths
 from datamanager.stages.download_planet import PLANET_KEY
 from datamanager.stages.download_srtm import planned_tiles
@@ -38,6 +39,9 @@ STAGES = (
      "Fetches the newest daily Protomaps planet build (Z0–15, about 140 GB, Protomaps basemap schema) as a new version, "
      "unless there is no newer one, and checks its header and layers. Needs no configuration; the newest build "
      "is kept (Settings → Download sources)."),
+    ("border", "Border crossings",
+     "Outlines every region's country area (core and extended) and finds the motorway to secondary roads that cross "
+     "the border between bordering regions, as one CSV per pair. Needs the approved region PBFs and border polygons."),
     ("download-srtm", "Download elevation (SRTM)",
      "Fetches the 1° SRTM tiles every region needs (core and overlap) as versioned downloads and unpacks them for "
      "Valhalla. Tiles that did not change upstream are not fetched again; open-sea tiles do not exist and are skipped."),
@@ -89,6 +93,9 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
             states[key] = "The configuration has no core country with a Geofabrik path."
         elif key == "extract-countries" and (planet is None or planet.status != "approved"):
             states[key] = "No approved planet: run Download planet and approve it first."
+        elif key == "border":
+            problems = border_inputs(session, config.id, resolved).problems
+            states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "download-srtm" and not planned_tiles(resolved):
             states[key] = "No region has an SRTM box."
         elif key == "polygons" and not any(r["core"] for r in resolved["regions"]):
