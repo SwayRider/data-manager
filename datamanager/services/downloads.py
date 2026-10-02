@@ -130,6 +130,12 @@ def _head(url: str, timeout: float, headers: dict | None = None) -> requests.Res
             time.sleep(RETRY_PAUSE_S * attempt)
         except requests.RequestException as exc:
             raise DownloadError(f"Could not reach {url}: {exc}", url=url) from exc
+    if response.status_code in (405, 501):  # the server refuses HEAD (OpenAddresses): a GET whose body is never read gives the same headers
+        try:
+            response = requests.get(url, stream=True, allow_redirects=True, timeout=timeout, headers=headers)
+            response.close()
+        except requests.RequestException as exc:
+            raise DownloadError(f"Could not reach {url}: {exc}", url=url) from exc
     if response.status_code >= 400:
         raise DownloadError(f"{url} answered HTTP {response.status_code}", url=url, status=response.status_code)
     return response

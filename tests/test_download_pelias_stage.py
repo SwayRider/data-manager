@@ -64,7 +64,8 @@ def cfg(app, upstream):
         "/wof/sqlite/whosonfirst-data-admin-aa-latest.db.bz2": (b"wof-aa", '"a"'),
         "/wof/sqlite/whosonfirst-data-admin-bb-latest.db.bz2": (b"wof-bb", '"b"'),
         "/wof/sqlite/whosonfirst-data-postalcode-aa-latest.db.bz2": (b"wof-pc-aa", '"p"'),
-        "/geonames/dump/allCountries.zip": (b"geonames", '"g"'),
+        "/geonames/dump/AA.zip": (b"geonames-aa", '"g"'),
+        "/geonames/dump/BB.zip": (b"geonames-bb", '"h"'),
         "/placeholder/store.sqlite3.gz": (b"placeholder", '"s"'),
         "/official/aa.geojson": (b"{}", '"o"'),
         LOOKUP: (json.dumps([{"job": 77}]).encode(), '"l"'),
@@ -85,8 +86,8 @@ def _run(profile_id):
 def test_plan_lists_every_source(cfg):
     resolved = _resolved(cfg.id)
     keys = [i.key for i in download_pelias.planned(SessionLocal(), resolved)]
-    assert keys == ["placeholder:store", "geonames:all", "wof:admin-aa", "wof:postalcode-aa", "official:aa",
-                    "wof:admin-bb", "wof:postalcode-bb", "openaddresses:aa/countrywide"]
+    assert keys == ["placeholder:store", "geonames:aa", "wof:admin-aa", "wof:postalcode-aa", "official:aa",
+                    "geonames:bb", "wof:admin-bb", "wof:postalcode-bb", "openaddresses:aa/countrywide"]
 
 
 def _resolved(profile_id):
@@ -106,10 +107,10 @@ def test_fetches_everything_and_reports(cfg):
     report = run.report_json
     assert result["status"] == "awaiting_review", report
     rows = {r["key"]: r for r in report["sources"]}
-    assert rows["geonames:all"]["status"] == "downloaded" and rows["openaddresses:aa/countrywide"]["status"] == "downloaded"
+    assert rows["geonames:aa"]["status"] == "downloaded" and rows["openaddresses:aa/countrywide"]["status"] == "downloaded"
     assert rows["wof:postalcode-bb"]["status"] == "missing"  # no such bundle: a warning, not a failure
     assert any("WOF postal codes BB" in w for w in report["warnings"])
-    assert report["summary"]["downloaded"] == 7 and report["summary"]["missing"] == 1
+    assert report["summary"]["downloaded"] == 8 and report["summary"]["missing"] == 1
     assert SessionLocal().query(DownloadRecord).filter_by(source_key="openaddresses:aa/countrywide").one().version_label
 
 
@@ -118,7 +119,7 @@ def test_rerun_is_unchanged_and_approval_makes_status_ok(cfg):
     runs.approve(SessionLocal(), runs.get_run(SessionLocal(), run.id))
     run, _ = _run(cfg.id)
     assert {r["status"] for r in run.report_json["sources"] if r["key"] != "wof:postalcode-bb"} == {"unchanged"}
-    assert SessionLocal().query(DownloadRecord).filter_by(source_key="geonames:all").count() == 1
+    assert SessionLocal().query(DownloadRecord).filter_by(source_key="geonames:aa").count() == 1
     assert stage_status.compute(SessionLocal(), cfg.id, _resolved(cfg.id), {})["download-pelias-data"].state in ("ok", "review")
 
 
@@ -146,6 +147,6 @@ def test_unknown_openaddresses_source_is_a_warning(cfg, upstream):
 
 
 def test_missing_essential_source_fails(cfg, upstream):
-    del upstream.files["/geonames/dump/allCountries.zip"]
+    del upstream.files["/geonames/dump/AA.zip"]
     run, result = _run(cfg.id)
-    assert result["status"] == "failed" and "GeoNames allCountries" in run.report_json["error"]
+    assert result["status"] == "failed" and "GeoNames AA" in run.report_json["error"]

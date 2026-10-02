@@ -18,11 +18,16 @@ class Upstream:
         self.no_ranges: set[str] = set()  # paths whose server ignores Range requests
         self.slow: dict[str, float] = {}  # path -> seconds to sleep per 64 kB written
         self.requests: list = []  # (path, start, end) of every GET with its range
+        self.no_head: set[str] = set()  # paths whose server answers HEAD with 405 (OpenAddresses)
         self.cut_first: dict[str, int] = {}  # path -> bytes after which the first GET drops the connection
         upstream = self
 
         class Handler(BaseHTTPRequestHandler):
             def _send(self, body_too):
+                if not body_too and self.path in upstream.no_head:
+                    self.send_response(405)
+                    self.end_headers()
+                    return
                 if self.path in upstream.loops:
                     self.send_response(301)
                     self.send_header("Location", self.path)
@@ -343,3 +348,16 @@ def test_prune_keeps_the_newest_versions_and_pinned(db_session):
     removed = downloads.prune(db_session, "planet:osm", keep=2)
     assert removed == [b.id]  # d and c are the newest two; a is pinned
     assert {r.id for r in downloads.versions(db_session, "planet:osm")} == {a.id, c.id, d.id}
+
+
+def test_fetch_works_when_the_server_refuses_head(tmp_data_root, db_session):
+    server = Upstream()
+    try:
+        server.files["/oa/source.geojson.gz"] = (b"addresses", '"v1"')
+        server.no_head.add("/oa/source.geojson.gz")
+        outcome = downloads.fetch(db_session, "openaddresses:xx/countrywide", server.base + "/oa/source.geojson.gz")
+        assert outcome.status == "downloaded" and downloads.abs_path(outcome.record).read_bytes() == b"addresses"
+        again = downloads.fetch(db_session, "openaddresses:xx/countrywide", server.base + "/oa/source.geojson.gz")
+        assert again.status == "unchanged"  # the ETag of the GET answer is compared as usual
+    finally:
+        server.close()

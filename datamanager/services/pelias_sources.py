@@ -1,7 +1,7 @@
 """What the Pelias stage needs downloaded for a resolved configuration, as versioned `source_key`s.
 
     placeholder:store            the pinned Placeholder store (`download.placeholder`)
-    geonames:all                 allCountries.zip (`download.geonames`)
+    geonames:<cc>                the country's GeoNames dump <CC>.zip (`download.geonames`), one per buildable country
     geonames-postal:<cc>         postal-code file of a country whose boundary source "GeoNames postal" is on
     wof:admin-<cc>               Who's On First admin bundle of every buildable country (core and overlap)
     wof:postalcode-<cc>          the same for postal codes (the legacy load imports them)
@@ -22,7 +22,6 @@ from datamanager.models import Country
 from datamanager.services import boundary_sources as boundary_source_service
 
 PLACEHOLDER_KEY = "placeholder:store"
-GEONAMES_KEY = "geonames:all"
 KINDS = ("placeholder", "geonames", "geonames-postal", "wof", "official", "openaddresses")
 
 
@@ -55,6 +54,11 @@ def openaddresses_sources(resolved: dict) -> list[str]:
     return sorted(seen)
 
 
+def geonames_code(iso2: str) -> str:
+    """The GeoNames country file name: the upper-case ISO2 code (`be` -> `BE`; a region-style `xx-yy` uses its last part)."""
+    return iso2.split("-")[-1].upper()
+
+
 def wof_code(country: dict) -> str:
     return str(country["wof_code"]).lower()
 
@@ -64,17 +68,17 @@ def plan(session, resolved: dict, base: dict[str, str]) -> list[Item]:
     countries = _buildable(resolved)
     if not countries:
         return []
-    items = [Item(PLACEHOLDER_KEY, "placeholder", "Placeholder store", base["placeholder"]),
-             Item(GEONAMES_KEY, "geonames", "GeoNames allCountries", f"{base['geonames'].rstrip('/')}/dump/allCountries.zip")]
+    items = [Item(PLACEHOLDER_KEY, "placeholder", "Placeholder store", base["placeholder"])]
     for iso2, country in sorted(countries.items()):
         code = wof_code(country)
+        cc = geonames_code(iso2)
+        items.append(Item(f"geonames:{cc.lower()}", "geonames", f"GeoNames {cc}", f"{base['geonames'].rstrip('/')}/dump/{cc}.zip", iso2))
         items.append(Item(f"wof:admin-{code}", "wof", f"WOF admin {code.upper()}", country=iso2))
         items.append(Item(f"wof:postalcode-{code}", "wof", f"WOF postal codes {code.upper()}", country=iso2))
         row = session.get(Country, iso2)
         if row is None:
             continue
         if boundary_source_service.get_state(row, "geonames_postal").enabled and has_postal_file(iso2):
-            cc = iso2.split("-")[-1].upper()
             items.append(Item(f"geonames-postal:{cc.lower()}", "geonames-postal", f"GeoNames postal {cc}",
                               f"{base['geonames'].rstrip('/')}/zip/{cc}.zip", iso2))
         official = boundary_source_service.get_state(row, "official_polygons")
