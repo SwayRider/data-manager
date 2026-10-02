@@ -8,6 +8,7 @@ from pathlib import Path
 from datamanager.config import config
 from datamanager.db import SessionLocal
 from datamanager.errors import ValidationError
+from datamanager.models import Asset
 from datamanager.services import assets, borders, osmium
 from datamanager.services.polygons import slug
 from datamanager.stages.contract import StageIO, StageResult, StageRunContext, StageRunner
@@ -138,6 +139,7 @@ class BorderStage(StageRunner):
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
+        review_map = {} if failed else self._map(session, outlines, crossings)
         if failed:
             assets.discard(session, run_id)
         warnings = [w for e in outlines + crossings for w in e.get("warnings", [])]
@@ -148,11 +150,31 @@ class BorderStage(StageRunner):
             },
             "outlines": outlines,
             "borders": crossings,
+            "map": review_map,
             "warnings": warnings,
         }
         if failed:
             report["error"] = "Failed: " + ", ".join(failed)
         return StageResult("failed" if failed else "success", report=report)
+
+    @staticmethod
+    def _map(session, outlines: list[dict], crossings: list[dict]) -> dict:
+        """Coarse outlines and crossing points for the run page's review map; read from the stored files so
+        regions and pairs skipped as unchanged show up too."""
+        data = {"outlines": [], "crossings": []}
+        for entry in outlines:
+            for f in entry.get("files", []):
+                asset = session.get(Asset, f["asset_id"]) if f.get("asset_id") else None
+                preview = borders.map_outline(assets.abs_path(asset)) if asset is not None and assets.abs_path(asset).exists() else None
+                if preview:
+                    data["outlines"].append({"name": f["name"], "region": entry["name"], "kind": f["name"].rsplit("-", 1)[-1], "preview": preview})
+        for entry in crossings:
+            asset = session.get(Asset, entry["asset_id"]) if entry.get("asset_id") else None
+            relative = (asset.meta_json or {}).get("geojson") if asset is not None else None
+            file = Path(config.DATA_ROOT) / relative if relative else None
+            if file is not None and file.exists():
+                data["crossings"].append({"pair": entry["name"], "count": entry.get("count", 0), "points": borders.map_points(file)})
+        return data
 
     def _outline(self, session, exe, region: RegionPlan, context, run_id: int, work: Path, out_dir: Path) -> dict:
         entry = {"name": region.name, "status": "success", "files": [], "warnings": []}

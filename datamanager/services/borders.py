@@ -12,7 +12,7 @@ from shapely.geometry import LineString, MultiPolygon, Point, Polygon, mapping, 
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
-from datamanager.services import osmium
+from datamanager.services import osmium, overlap
 
 ROAD_TYPES = ("motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", "secondary", "secondary_link")
 EPSILON = 1e-5  # degrees either side of a crossing used to tell which side of the outline the road continues on
@@ -144,3 +144,26 @@ def crossings_geojson(crossings: list[Crossing]) -> dict:
         {"type": "Feature", "geometry": mapping(c.location),
          "properties": {"osm_id": c.osm_id, "osm_type": c.osm_type, "from": c.from_region, "to": c.to_region}}
         for c in crossings]}
+
+
+MAP_POINT_CAP = 500  # crossings per pair kept in the run report for the review map
+
+
+def map_outline(path: Path) -> dict | None:
+    """Coarse GeoJSON of an outline file for the review map (None when the outline is empty)."""
+    parts = load_outline(path)
+    if not parts:
+        return None
+    merged = unary_union(parts).simplify(0.005, preserve_topology=True)
+    result = json.loads(json.dumps(mapping(merged)))
+    return {**result, "coordinates": overlap._round(result["coordinates"])}
+
+
+def map_points(path: Path) -> list[list]:
+    """[lon, lat, osm_type, osm_id] per crossing of a crossings GeoJSON, rounded and capped."""
+    features = json.loads(Path(path).read_text(encoding="utf-8"))["features"]
+    points = []
+    for f in features[:MAP_POINT_CAP]:
+        x, y = f["geometry"]["coordinates"][:2]
+        points.append([round(x, 5), round(y, 5), f["properties"]["osm_type"], f["properties"]["osm_id"]])
+    return points

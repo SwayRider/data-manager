@@ -164,6 +164,10 @@ def test_builds_outlines_and_crossings(inputs):
     parts = borders.load_outline(assets.abs_path(outline))
     assert len(parts) == 1 and parts[0].bounds == pytest.approx((1.15, 50, 2.15, 51))
     assert report["borders"][0]["by_type"] == {"motorway": 1, "primary": 2}
+    review = report["map"]
+    assert {o["name"] for o in review["outlines"]} >= {"r2-core"} and all(o["preview"]["type"] for o in review["outlines"])
+    assert len(review["crossings"]) == 1 and len(review["crossings"][0]["points"]) == 3
+    assert {p[2] for p in review["crossings"][0]["points"]} == {"primary", "motorway"}
 
 
 def test_rerun_skips_unchanged_inputs_and_status_follows(inputs):
@@ -175,6 +179,7 @@ def test_rerun_skips_unchanged_inputs_and_status_follows(inputs):
     report = _report(run_id)
     assert report["borders"][0]["result"] == "unchanged"
     assert {f["status"] for o in report["outlines"] for f in o["files"]} == {"unchanged"}
+    assert report["map"]["outlines"] and report["map"]["crossings"][0]["points"]  # unchanged results still map
     # a newer approved region PBF makes it outdated
     run = runs.create_run(session, "osm-extract", inputs)
     _make_asset(inputs, run, "osm-pbf", "r2", "r2.osm.pbf", xml=_osm(BOXES["bb"], ROADS[:1]))

@@ -1,11 +1,25 @@
 {% set summary = run.report_json.get('summary') %}
 <p>{{ summary.regions }} region(s), {{ summary.pairs }} border pair(s), {{ summary.crossings }} crossing(s) found.</p>
 {% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% set review = run.report_json.get('map') %}
+{% if review and (review.outlines or review.crossings) %}
+<div id="border-map" class="poly-map"></div>
+<p class="legend muted">
+  Outlines: solid = core, dashed = extended, one colour per region. Crossings:
+  <span class="swatch" style="background:#c62828"></span> motorway
+  <span class="swatch" style="background:#e08a00"></span> trunk
+  <span class="swatch" style="background:#2563eb"></span> primary
+  <span class="swatch" style="background:#2e7d32"></span> secondary. Click a row to zoom to it.
+</p>
+<script type="application/json" id="border-data">{{ review|tojson }}</script>
+{% else %}
+<p class="muted">This run has no review map (it was made before the map existed): run the stage again; unchanged results are not recomputed.</p>
+{% endif %}
 <h3>Border crossings</h3>
 <table class="resolved-table">
   <tr><th>Pair</th><th>Result</th><th>Crossings</th><th>By road type</th><th>File</th></tr>
   {% for b in run.report_json.borders %}
-  <tr><td>{{ b.from }} → {{ b.to }}</td>
+  <tr data-border="{{ b.name }}" style="cursor:pointer"><td>{{ b.from }} → {{ b.to }}</td>
     <td>{% if b.status == 'failed' %}<span class="error">{{ b.message }}</span>{% else %}{{ b.result }}{% endif %}</td>
     <td>{{ b.count }}</td>
     <td>{% for t, n in (b.by_type or {}).items() %}{{ t }} {{ n }}{{ ', ' if not loop.last }}{% endfor %}</td>
@@ -18,7 +32,8 @@
   {% for o in run.report_json.outlines %}{% if o.status == 'failed' %}
   <tr><td>{{ o.name }}</td><td colspan="5" class="error">{{ o.message }}</td></tr>
   {% else %}{% for f in o.files %}
-  <tr><td>{{ o.name }}</td><td>{{ f.name }}</td><td>{{ f.status }}</td><td>{{ f.parts }}</td><td>{{ f.vertices }}</td>
+  <tr data-border="{{ f.name }}" style="cursor:pointer"><td>{{ o.name }}</td><td>{{ f.name }}</td><td>{{ f.status }}</td><td>{{ f.parts }}</td><td>{{ f.vertices }}</td>
     <td>{% if f.bbox %}<code>{{ f.bbox|join(', ') }}</code>{% endif %}</td></tr>
   {% endfor %}{% endif %}{% endfor %}
 </table>
+<script>if (window.initBorderMap) initBorderMap();</script>

@@ -3,5 +3,6 @@
 {% block content %}
 <p><a href="{{ url_for('build.index') }}">&larr; Build</a></p>
 <script src="{{ url_for('build.static', filename='polymap.js') }}"></script>
+<script src="{{ url_for('build.static', filename='bordermap.js') }}"></script>
 {% include "build/_run.html" %}
 {% endblock %}
