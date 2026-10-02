@@ -351,7 +351,8 @@ def style_preview(config_id: int, key: str):
         abort(404)
     tiles = downloads.resolve_version(SessionLocal(), TILES_KEY)
     tiles_url = "pmtiles://" + url_for("configure.style_tiles", _external=True) if tiles else None
-    return jsonify(style_service.preview_info(key, tiles_url))
+    assets_url = url_for("configure.static", filename="map-assets", _external=True)  # vendored glyphs and sprites
+    return jsonify(style_service.preview_info(key, tiles_url, assets_url))
 
 
 @bp.get("/style/tiles.pmtiles")

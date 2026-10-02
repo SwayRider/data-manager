@@ -119,10 +119,15 @@ def build_style(key: str, overrides: dict | None = None, tiles_url: str | None =
     return style
 
 
-def preview_info(key: str, tiles_url: str | None = None) -> dict:
+def preview_info(key: str, tiles_url: str | None = None, assets_url: str | None = None) -> dict:
     """What the live preview needs: the style over our own approved tiles (`tiles_url`, None when there are none
-    yet), which layers draw which label kinds, and the base style's defaults."""
-    style = build_style(key, tiles_url=tiles_url, glyphs=PUBLIC_GLYPHS)
+    yet), which layers draw which label kinds, and the base style's defaults. `assets_url` is the (absolute) base of
+    the vendored glyphs/sprites served by the app (`fonts/`, `sprites/` below it); without it the public ones are used."""
+    if assets_url:
+        sprite = f"{assets_url.rstrip('/')}/sprites/{load(key)['sprite'].rsplit('/', 1)[-1]}"
+        style = build_style(key, tiles_url=tiles_url, glyphs=f"{assets_url.rstrip('/')}/fonts/{{fontstack}}/{{range}}.pbf", sprite=sprite)
+    else:
+        style = build_style(key, tiles_url=tiles_url, glyphs=PUBLIC_GLYPHS)
     return {
         "style": style,
         "tiles_available": bool(tiles_url),

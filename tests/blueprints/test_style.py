@@ -37,6 +37,10 @@ def test_preview_without_tiles_and_downloads(client, cid):
     info = client.get(f"/configure/{cid}/style/preview/light").get_json()
     assert info["layers"]["places_locality_town"] == ["town"] and info["style"]["sources"]["protomaps"]["url"]
     assert info["tiles_available"] is False
+    assert "protomaps.github.io" not in info["style"]["glyphs"] + info["style"]["sprite"]  # vendored copies, works offline
+    glyphs = info["style"]["glyphs"].replace("{fontstack}", "Noto Sans Regular").replace("{range}", "0-255")
+    assert client.get(glyphs.split("localhost", 1)[-1]).status_code == 200
+    assert client.get(info["style"]["sprite"].split("localhost", 1)[-1] + ".json").status_code == 200
     assert client.get(f"/configure/{cid}/style/preview/nope").status_code == 404
     client.post(f"/configure/{cid}/style/settings", data={"light_style": "light", "dark_style": "dark", "label_town": "7"})
     light = client.get(f"/configure/{cid}/style-light.json?tiles_url=pmtiles://https://t/x.pmtiles")
