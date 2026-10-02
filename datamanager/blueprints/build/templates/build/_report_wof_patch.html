@@ -1,0 +1,47 @@
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% if run.report_json.get('detect') is not none %}
+  {% for c in run.report_json.detect %}
+    <h4>{{ c.name }} ({{ c.iso2 }})</h4>
+    {% if c.status == 'failed' %}<p class="error">{{ c.message }}</p>{% else %}
+    <p class="muted">Current setting: localities {{ c.current.levels or '—' }}, municipalities {{ c.current.localadmin_levels or '—' }}.
+      WOF has {{ c.wof.localadmin }} municipality and {{ c.wof.locality }} locality names.</p>
+    <table>
+      <thead><tr><th>Level</th><th>Polygons</th><th>Covers the country</th><th>Names also WOF municipalities</th><th>Names also WOF localities</th></tr></thead>
+      <tbody>{% for r in c.levels %}
+        <tr><td>{{ r.level }}</td><td>{{ r.polygons }}</td><td>{% if r.coverage is not none %}{{ (r.coverage * 100)|round|int }} %{% endif %}</td>
+            <td>{{ (r.match_localadmin * 100)|round|int }} %</td><td>{{ (r.match_locality * 100)|round|int }} %</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    <p>Suggestion: municipalities <strong>{{ c.suggest.localadmin_levels|join(', ') or 'none' }}</strong>, localities <strong>{{ c.suggest.levels|join(', ') or 'none' }}</strong>.
+      A suggestion only: check the table, a wrong level replaces real data.</p>
+    <form hx-post="{{ url_for('countries.apply_levels', iso2=c.iso2) }}" hx-target="this" hx-swap="outerHTML">
+      <label>Localities <input name="osm_admin_levels" value="{{ c.suggest.levels|join(', ') }}" size="8"></label>
+      <label>Municipalities <input name="osm_localadmin_levels" value="{{ c.suggest.localadmin_levels|join(', ') }}" size="8"></label>
+      <button type="submit">Apply to {{ c.iso2 }}</button>
+    </form>
+    {% endif %}
+  {% endfor %}
+{% else %}
+  {% set s = run.report_json.get('summary') %}
+  {% if s %}<p>{{ s.countries }} country(ies): {{ s.patched }} patched, {{ s.unchanged }} unchanged, {{ s.failed }} failed.
+    {% if s.untouched %}Without a boundary source (WOF unchanged): {{ s.untouched|join(', ') }}.{% endif %}</p>{% endif %}
+  {% for c in run.report_json.patch %}
+    <h4>{{ c.name }} ({{ c.iso2 }}) — {{ c.get('result', c.status) }}</h4>
+    {% if c.status == 'failed' %}<p class="error">{{ c.message }}</p>{% endif %}
+    {% if c.stats %}
+    <table>
+      <thead><tr><th>Placetype</th><th>New</th><th>Parent found at</th><th>WOF polygons replaced</th><th>WOF polygons kept (nothing covers them)</th><th>Duplicate points removed</th><th>Kept WOF points</th><th>Ambiguous</th></tr></thead>
+      <tbody>{% for pt, st in c.stats.items() %}
+        <tr><td>{{ pt }}</td><td>{{ st.new }}</td><td>{% for k, v in st.parent_levels.items() %}{{ k }} {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+            <td>{{ st.get('removed_polygons', 0) }}</td><td>{{ st.get('kept_polygons', 0) }}</td><td>{{ st.get('removed_points', 0) }}</td><td>{{ st.get('kept_points', 0) }}</td><td>{{ st.ambiguous }}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+    {% endif %}
+    {% if c.get('unreplaced_total') %}
+    <details><summary>{{ c.unreplaced_total }} WOF polygon(s) stay because no new polygon covers them (review: is a level missing?)</summary>
+      <p class="muted">{{ c.unreplaced|map(attribute='name')|join(', ') }}{% if c.unreplaced_total > c.unreplaced|length %} … and {{ c.unreplaced_total - c.unreplaced|length }} more{% endif %}</p>
+    </details>
+    {% endif %}
+  {% endfor %}
+  <p class="muted">OSM data: © OpenStreetMap contributors (ODbL); official polygons carry the licence of their source.</p>
+{% endif %}

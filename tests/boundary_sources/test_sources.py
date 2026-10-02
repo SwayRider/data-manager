@@ -10,13 +10,26 @@ OSM, OFFICIAL, POSTAL = SOURCES["osm_admin"], SOURCES["official_polygons"], SOUR
 
 
 def test_osm_admin_default_from_curated():
-    assert OSM.default("be", {"osm_locality_levels": [9]}) == SourceState(True, {"levels": [9]})
-    assert OSM.default("fr", {}) == SourceState(False, {"levels": []})
+    assert OSM.default("be", {"osm_locality_levels": [9], "osm_localadmin_levels": [8]}) == SourceState(True, {"levels": [9], "localadmin_levels": [8]})
+    assert OSM.default("be", {"osm_locality_levels": [9]}) == SourceState(True, {"levels": [9], "localadmin_levels": []})
+    assert OSM.default("fr", {}) == SourceState(False, {"levels": [], "localadmin_levels": []})
+
+
+def test_osm_admin_municipality_levels():
+    state = OSM.validate(OSM.from_form({"osm_admin_levels": "", "osm_localadmin_levels": "8"}), verify=True)
+    assert state == SourceState(True, {"levels": [], "localadmin_levels": [8]})
+    assert OSM.describe(state) == "municipalities L8"
+    both = OSM.validate(OSM.from_form({"osm_admin_levels": "9", "osm_localadmin_levels": "8"}), verify=True)
+    assert OSM.describe(both) == "OSM L9 + municipalities L8"
+    assert OSM.form_values(both) == {"osm_admin_levels": "9", "osm_localadmin_levels": "8"}
+    with pytest.raises(ValidationError) as exc:
+        OSM.validate(OSM.from_form({"osm_localadmin_levels": "99"}), verify=False)
+    assert exc.value.details["field"] == "osm_localadmin_levels"
 
 
 def test_osm_admin_parses_sorts_and_dedupes():
     state = OSM.validate(OSM.from_form({"osm_admin_levels": "10, 9 9"}), verify=True)
-    assert state == SourceState(True, {"levels": [9, 10]})
+    assert state == SourceState(True, {"levels": [9, 10], "localadmin_levels": []})
     assert OSM.validate(OSM.from_form({"osm_admin_levels": "  "}), verify=True).enabled is False
 
 

@@ -12,7 +12,8 @@ from datamanager.stages.polygons import PolygonsStage
 from datamanager.stages.registry import default_registry
 from datamanager.stages.styles import StylesStage
 from datamanager.stages.valhalla import ValhallaStage
+from datamanager.stages.wof_patch import WofPatchStage
 
 for _stage in (NoOpStage, DownloadOsmStage, PolygonsStage, OsmExtractStage, DownloadPlanetStage, ExtractCountriesStage,
-               DownloadTilesStage, StylesStage, DownloadSrtmStage, BorderStage, ValhallaStage, DownloadPeliasStage):
+               DownloadTilesStage, StylesStage, DownloadSrtmStage, BorderStage, ValhallaStage, DownloadPeliasStage, WofPatchStage):
     default_registry.register(_stage)

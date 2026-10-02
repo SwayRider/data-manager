@@ -85,3 +85,44 @@ def save(iso2: str):
     # Empty body clears the modal; the event lets the map restyle the country.
     event = {"country-updated": {"iso2": country.iso2, "name": country.name, "curated": country.is_curated}}
     return Response("", headers={"HX-Trigger": json.dumps(event)})
+
+
+# ---- locality level detection (the wof-patch stage in detect mode) --------------------------------------------
+
+@bp.post("/<iso2>/detect-levels")
+def detect_levels(iso2: str):
+    """Starts a wof-patch run that only measures the OSM admin levels of this country against WOF."""
+    from datamanager.blueprints.build.routes import enqueue_run
+    from datamanager.services import config_profiles as profiles
+    from datamanager.services import runs
+    from datamanager.stages.wof_patch import plan_inputs
+
+    country = _get_country_or_404(iso2)
+    session = SessionLocal()
+    problems = plan_inputs(session, None, detect=[country.iso2]).problems
+    if problems:
+        return f'<span class="error">{problems[0]}</span>', 422
+    wanted = request.cookies.get("last_config", type=int)
+    profile = (profiles.get_profile(session, wanted) if wanted else None) or next(iter(profiles.list_profiles(session)), None)
+    run = runs.create_run(session, "wof-patch", profile.id if profile else None, params={"detect": [country.iso2]})
+    try:
+        runs.set_job_id(session, run, enqueue_run(run.id))
+    except Exception as exc:  # broker down: the run exists, visibly failed
+        runs.fail(session, run, exc)
+    return f'Run {run.id} started: <a href="/build/runs/{run.id}" target="_blank">open the result</a> (apply the suggestion there).'
+
+
+@bp.post("/<iso2>/apply-levels")
+def apply_levels(iso2: str):
+    """Stores the levels chosen on a detect report as the country's OSM locality source."""
+    from datamanager.country_sources import SourceState
+
+    country = _get_country_or_404(iso2)
+    source = BOUNDARY_SOURCES["osm_admin"]
+    try:
+        state = source.validate(source.from_form(request.form), verify=False)
+    except ValidationError as exc:
+        return f'<p class="error">{exc.message}</p>', 422
+    boundary_source_service.set_state(country, "osm_admin", SourceState(enabled=state.enabled, config=state.config))
+    SessionLocal().commit()
+    return f'<p class="muted">Saved for {country.iso2}: {source.describe(state)}.</p>'

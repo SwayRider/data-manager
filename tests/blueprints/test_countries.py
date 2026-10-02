@@ -177,3 +177,18 @@ def test_boundary_validation_error_keeps_input_and_saves_nothing(client, tmp_dat
     body = r.get_data(as_text=True)
     assert r.status_code == 422 and "between 5 and 12" in body and 'value="99"' in body
     assert boundary_source_service.get_state(SessionLocal().get(Country, "nl"), "osm_admin").enabled is False
+
+
+def test_empty_locality_levels_stay_empty_with_municipalities_set(client, tmp_data_root):
+    """An empty field is saved as empty: it must not fall back to a default (the curated Germany default was 9 and 10)."""
+    from datamanager.country_sources import SourceState
+
+    _add_country("de", "Germany", "europe/germany")
+    boundary_source_service.set_state(SessionLocal().get(Country, "de"), "osm_admin", SourceState(True, {"levels": [9, 10], "localadmin_levels": []}))
+    SessionLocal().commit()
+    response = client.post("/countries/de", headers=HX, data={"geofabrik_path": "", "wof_code": "de", "skip_verify": "1",
+                                                              "osm_admin_levels": "", "osm_localadmin_levels": "8"})
+    assert response.status_code == 200
+    assert boundary_source_service.get_state(SessionLocal().get(Country, "de"), "osm_admin").config == {"levels": [], "localadmin_levels": [8]}
+    html = client.get("/countries/de", headers=HX).get_data(as_text=True)
+    assert 'name="osm_admin_levels" value=""' in html

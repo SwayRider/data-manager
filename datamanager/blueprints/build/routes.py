@@ -14,6 +14,7 @@ from datamanager.stages.download_srtm import planned_tiles
 from datamanager.stages.download_tiles import TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs
 from datamanager.stages.valhalla import plan_inputs as valhalla_inputs
+from datamanager.stages.wof_patch import plan_inputs as wof_patch_inputs
 from datamanager.stages import status as stage_status
 
 bp = Blueprint(
@@ -55,6 +56,11 @@ STAGES = (
      "Fetches what the Pelias import loads as versioned downloads: the Placeholder store, GeoNames, the Who's On First bundles "
      "of every core and overlap country, GeoNames postal files, official locality polygons and the OpenAddresses sources "
      "(needs the token of Settings → Pelias, otherwise those are skipped). Unchanged sources are not fetched again."),
+    ("wof-patch", "Patch WOF localities",
+     "Replaces the Who's On First locality (and municipality) polygons of every country that has a locality boundary source "
+     "(right-click a country on the Configure map) by OSM administrative boundaries or an official polygon file, and writes "
+     "the patched WOF database Pelias reads. Needs the approved country extracts and the approved Pelias data downloads; "
+     "countries whose inputs did not change are skipped."),
     ("styles", "Map styles",
      "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
      "URLs of Settings → Public URLs). Needs only the configuration."),
@@ -110,6 +116,9 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
             states[key] = "No region has an SRTM box."
         elif key == "download-pelias-data" and not pelias_planned(session, resolved):
             states[key] = "The configuration has no core or overlap country with a Geofabrik path."
+        elif key == "wof-patch":
+            problems = wof_patch_inputs(session, resolved).problems
+            states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "polygons" and not any(r["core"] for r in resolved["regions"]):
             states[key] = "No region has a core country."
         elif key == "valhalla":

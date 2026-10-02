@@ -10,7 +10,8 @@
 #
 # Optional per-country key `osm_locality_levels`: the OSM admin_level(s) holding
 # sub-municipal localities (BE 9, NL 10, DE 9+10, ...). It differs per country, so it is
-# only set where measured; unset = Who's On First boundaries are used unchanged.
+# only set where measured; unset = Who's On First boundaries are used unchanged. `osm_localadmin_levels` is the
+# same for municipalities (BE 8, NL 8, LU 8, DE 8), which WOF often lacks as polygons.
 #
 # Open risk (see DESIGN.md #1): data-pipeline/config/config-dev.yml
 # references 49 distinct ISO2 codes across its 8 regions. Extending this
@@ -23,6 +24,7 @@
 be:
   geofabrik_path: europe/belgium
   osm_locality_levels: [9]
+  osm_localadmin_levels: [8]
   wof_code: be
   openaddresses_files:
     - be/bru/bosa-region-brussels-fr
@@ -35,6 +37,7 @@ be:
 lu:
   geofabrik_path: europe/luxembourg
   osm_locality_levels: [9]
+  osm_localadmin_levels: [8]
   wof_code: lu
   openaddresses_files:
     - lu/countrywide
@@ -42,6 +45,7 @@ lu:
 nl:
   geofabrik_path: europe/netherlands
   osm_locality_levels: [10]
+  osm_localadmin_levels: [8]
   wof_code: nl
   openaddresses_files:
     - nl/countrywide
@@ -60,6 +64,7 @@ mc:
 de:
   geofabrik_path: europe/germany
   osm_locality_levels: [9, 10]
+  osm_localadmin_levels: [8]
   wof_code: de
   openaddresses_files:
     - de/bb/statewide

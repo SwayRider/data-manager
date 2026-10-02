@@ -1,4 +1,13 @@
-<label>OSM admin levels <small class="muted">(comma-separated; sub-municipal level, e.g. 9 for BE — needs a Geofabrik path)</small>
-  <input name="osm_admin_levels" value="{{ values.osm_admin_levels }}" placeholder="9"
+<label>OSM admin levels, localities <small class="muted">(comma-separated; sub-municipal level, e.g. 9 for BE; needs a Geofabrik path)</small>
+  <input name="osm_admin_levels" value="{{ values.osm_admin_levels }}" placeholder="none (WOF localities stay)"
          class="{{ 'invalid' if error_field == 'osm_admin_levels' }}">
 </label>
+<label>OSM admin levels, municipalities <small class="muted">(e.g. 8 for BE; patches the municipalities WOF lacks as polygons; optional)</small>
+  <input name="osm_localadmin_levels" value="{{ values.osm_localadmin_levels }}" placeholder="none (WOF municipalities stay)"
+         class="{{ 'invalid' if error_field == 'osm_localadmin_levels' }}">
+</label>
+{% if country.geofabrik_path %}
+<p class="muted"><button type="button"
+   hx-post="{{ url_for('countries.detect_levels', iso2=country.iso2) }}" hx-target="#detect-result" hx-swap="innerHTML">Detect levels from the extract</button>
+   <span id="detect-result"></span></p>
+{% endif %}

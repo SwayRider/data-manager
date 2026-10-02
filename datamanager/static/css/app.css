@@ -39,7 +39,7 @@ dialog.modal input.color-input { width: 4rem; height: 2rem; padding: 0; }
 #region-info .warn { color: #b26a00; }
 #region-info a { color: inherit; cursor: pointer; text-decoration: underline; }
 .legend { font-size: .8rem; }
-#country-map { height: 70vh; border: 1px solid var(--border); border-radius: 6px; }
+#country-map { height: 70vh; border: 1px solid var(--border); border-radius: 6px; position: relative; overflow: hidden; isolation: isolate; }  /* Leaflet panes use z-index up to 1000: keep them inside the frame */
 table th { text-align: left; padding-right: 1.5rem; }
 
 @media (max-width: 640px) {
@@ -96,7 +96,7 @@ dialog.modal select { display: block; width: 100%; margin-top: .25rem; }
 .inline-form { display: inline; margin-left: auto; }
 .add-region { display: flex; gap: .4rem; }
 .add-region input { flex: 1; min-width: 0; }
-#style-map { height: 65vh; border: 1px solid var(--border); border-radius: 6px; }
+#style-map { height: 65vh; border: 1px solid var(--border); border-radius: 6px; position: relative; overflow: hidden; isolation: isolate; }
 .preview-bar { display: flex; align-items: center; gap: .4rem; margin-bottom: .5rem; flex-wrap: wrap; }
 .preview-bar .spacer { flex: 1; }
 .tiles-layout label.label-row { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
