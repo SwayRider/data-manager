@@ -39,14 +39,11 @@ TOOLS: tuple[ToolDef, ...] = (
                          "(or `apt install docker.io` for the distribution build)."),
     ToolDef("aws", "AWS CLI", "SRTM download (s3)", ("aws",), required=False,
             install_help="`apt install awscli`, or `pip install awscli`."),
-    ToolDef("java", "Java (JRE 21+)", "Tiles stage (planetiler, Phase 7)", ("java",), version_args=("-version",),
-            min_version=(21,), required=False, apt="openjdk-21-jre-headless"),
+    ToolDef("pmtiles", "pmtiles CLI", "Tiles stage (Phase 7)", ("pmtiles",), version_args=("version",), required=False,
+            install_help="Not in apt: download the go-pmtiles release for your platform from https://github.com/protomaps/go-pmtiles/releases "
+                         "and put `pmtiles` on PATH (or set its path here)."),
     ToolDef("valhalla", "Valhalla (compiled)", "Valhalla stage", kind="built", required=False,
             install_help="Needs git, cmake, make and g++. Press Build: the configured version (Settings → Tools → Valhalla version) "
                          "is cloned and compiled into the data root (tools/valhalla), which takes a while."),
-    ToolDef("planetiler", "planetiler.jar", "Tiles stage (Phase 7)", kind="file", required=False,
-            default_file="tools/planetiler.jar",
-            install_help="Not in apt: download planetiler.jar from https://github.com/onthegomap/planetiler/releases "
-                         "to the default location (data root, tools/planetiler.jar) or set its path here."),
 )
 BY_KEY = {t.key: t for t in TOOLS}
