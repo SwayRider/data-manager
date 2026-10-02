@@ -134,3 +134,5 @@ dialog.modal select { display: block; width: 100%; margin-top: .25rem; }
 .stage-legend { font-size: .85rem; }
 a.stage-dot { text-decoration: none; cursor: pointer; }
 a.stage-dot:hover { filter: brightness(1.15); box-shadow: 0 0 0 2px var(--border); }
+.runs-pager { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: .5rem; }
+.runs-pager label.inline { display: inline-flex; align-items: center; gap: .4rem; margin: 0 0 0 auto; }

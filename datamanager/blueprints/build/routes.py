@@ -24,6 +24,7 @@ bp = Blueprint(
 
 LAST_CONFIG_COOKIE = "last_config"  # written by the Configure section
 ACTIVE = ("queued", "running")
+RUNS_PER_PAGE = (10, 25, 50, 100)  # choices of the runs overview; the first is the default
 
 # key, title, what it does. Each is runnable on its own once its inputs are approved.
 STAGES = (
@@ -148,6 +149,17 @@ def _planet_info(key: str = PLANET_KEY):
     return {"version": record.version_label, "data": record.data_timestamp, "size": record.size_bytes} if record else None
 
 
+def _runs_page(session, config_id: int | None) -> dict:
+    """The runs overview slice for `?page=` and `?per_page=` (newest first, 10 per page by default, page clamped to the range)."""
+    per_page = request.args.get("per_page", type=int)
+    per_page = per_page if per_page in RUNS_PER_PAGE else RUNS_PER_PAGE[0]
+    total = runs.count_runs(session, config_id)
+    pages = max(1, -(-total // per_page))
+    page = min(max(request.args.get("page", 1, type=int), 1), pages)
+    return {"rows": runs.list_runs(session, config_id, limit=per_page, offset=(page - 1) * per_page),
+            "page": page, "pages": pages, "per_page": per_page, "total": total, "choices": RUNS_PER_PAGE}
+
+
 @bp.get("/")
 def index():
     session = SessionLocal()
@@ -164,7 +176,7 @@ def index():
         planet=_planet_info(),
         tiles=_planet_info(TILES_KEY),
         region_names=[r["name"] for r in resolved["regions"] if r["core"]] if config else [],
-        runs=runs.list_runs(session, config.id if config else None),
+        runs=_runs_page(session, config.id if config else None),
     )
 
 

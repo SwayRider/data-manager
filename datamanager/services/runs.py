@@ -38,11 +38,18 @@ def get_run(session: Session, run_id: int) -> BuildRun | None:
     return session.get(BuildRun, run_id)
 
 
-def list_runs(session: Session, config_id: int | None = None, limit: int = 50) -> list[BuildRun]:
+def list_runs(session: Session, config_id: int | None = None, limit: int = 50, offset: int = 0) -> list[BuildRun]:
     query = session.query(BuildRun)
     if config_id is not None:
         query = query.filter(BuildRun.config_profile_id == config_id)
-    return query.order_by(BuildRun.id.desc()).limit(limit).all()
+    return query.order_by(BuildRun.id.desc()).offset(offset).limit(limit).all()
+
+
+def count_runs(session: Session, config_id: int | None = None) -> int:
+    query = session.query(BuildRun)
+    if config_id is not None:
+        query = query.filter(BuildRun.config_profile_id == config_id)
+    return query.count()
 
 
 def set_job_id(session: Session, run: BuildRun, job_id: str) -> None:

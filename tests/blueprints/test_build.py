@@ -286,3 +286,25 @@ def test_running_review_and_failed_indicators_link_to_the_run(client, cfg):
 
 def _card_any(html, title):
     return next(s for s in html.split("stage-card")[1:] if f"</a> {title}</h3>" in s or f"</span> {title}</h3>" in s).split("</section>")[0]
+
+
+def _make_runs(n, config_id):
+    session = SessionLocal()
+    for _ in range(n):
+        runs.create_run(session, "styles", config_id)
+
+
+def test_runs_overview_is_paginated_newest_first(client, app):
+    profile = profiles.create_profile(SessionLocal(), "paged")
+    _make_runs(23, profile.id)
+    first = client.get(f"/build/?config={profile.id}").get_data(as_text=True)
+    assert "Page 1 of 3 (23 runs)" in first and first.count('<td><a href="/build/runs/') == 10
+    assert ">23</a>" in first and ">14</a>" in first and ">13</a>" not in first
+    last = client.get(f"/build/?config={profile.id}&page=3").get_data(as_text=True)
+    assert "Page 3 of 3" in last and last.count('<td><a href="/build/runs/') == 3 and ">1</a>" in last
+    wide = client.get(f"/build/?config={profile.id}&per_page=25").get_data(as_text=True)
+    assert "Page 1 of 1" in wide and wide.count('<td><a href="/build/runs/') == 23
+    # nonsense values fall back to the default and a page past the end is clamped
+    odd = client.get(f"/build/?config={profile.id}&per_page=7&page=99").get_data(as_text=True)
+    assert "Page 3 of 3" in odd
+    assert "page=2" in first and "Newer" in first and "Older" in first

@@ -47,11 +47,11 @@
 </section>
 {% endfor %}
 
-<h2>Runs</h2>
-{% if runs %}
+<h2 id="runs">Runs</h2>
+{% if runs.rows %}
 <table class="resolved-table">
   <tr><th>#</th><th>Stage</th><th>Status</th><th>Started</th><th>Finished</th></tr>
-  {% for r in runs %}
+  {% for r in runs.rows %}
   <tr>
     <td><a href="{{ url_for('build.run_detail', run_id=r.id) }}">{{ r.id }}</a></td>
     <td>{{ r.stage_key }}</td>
@@ -61,6 +61,16 @@
   </tr>
   {% endfor %}
 </table>
+<form method="get" action="{{ url_for('build.index', _anchor='runs') }}" class="runs-pager">
+  {% if config %}<input type="hidden" name="config" value="{{ config.id }}">{% endif %}
+  {% if runs.page > 1 %}<a href="{{ url_for('build.index', config=config.id if config else None, page=runs.page - 1, per_page=runs.per_page, _anchor='runs') }}">&laquo; Newer</a>{% else %}<span class="muted">&laquo; Newer</span>{% endif %}
+  <span class="muted">Page {{ runs.page }} of {{ runs.pages }} ({{ runs.total }} run{{ 's' if runs.total != 1 }})</span>
+  {% if runs.page < runs.pages %}<a href="{{ url_for('build.index', config=config.id if config else None, page=runs.page + 1, per_page=runs.per_page, _anchor='runs') }}">Older &raquo;</a>{% else %}<span class="muted">Older &raquo;</span>{% endif %}
+  <label class="inline">Per page
+    <select name="per_page" onchange="this.form.submit()">
+      {% for n in runs.choices %}<option value="{{ n }}" {{ 'selected' if n == runs.per_page }}>{{ n }}</option>{% endfor %}
+    </select></label>
+</form>
 {% else %}<p class="muted">No runs yet.</p>{% endif %}
 {% endif %}
 {% endblock %}
