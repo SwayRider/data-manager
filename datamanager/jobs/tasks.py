@@ -62,9 +62,15 @@ def run_stage(run_id: int) -> dict:
 
 
 def build_tool(key: str) -> dict:
-    """Compile a tool that data-manager builds itself (Settings → Tools). Currently only Valhalla."""
-    from datamanager.services import valhalla_build
+    """Build a tool that data-manager builds itself (Settings → Tools): Valhalla or the Pelias importers."""
+    from datamanager.services.built_tools import BUILDERS
 
-    if key != "valhalla":
+    if key not in BUILDERS:
         raise ValueError(f"No build for tool {key}")
-    return valhalla_build.build(SessionLocal())
+    builder = BUILDERS[key]
+    try:
+        return builder.build(SessionLocal())
+    except Exception as exc:  # builders record BuildError themselves; anything else must not leave the state "building"
+        if builder.read_state().get("status") in builder.ACTIVE:
+            builder._write_state({**builder.read_state(), "status": "failed", "message": f"{type(exc).__name__}: {exc}"[:300]})
+        raise

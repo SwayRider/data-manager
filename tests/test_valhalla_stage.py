@@ -9,7 +9,7 @@ from datamanager.config import config
 from datamanager.db import SessionLocal
 from datamanager.jobs import tasks
 from datamanager.models import Country
-from datamanager.services import assets, runs, tools, valhalla_build
+from datamanager.services import assets, built_tools, runs, tools, valhalla_build
 from datamanager.services import config_profiles as profiles
 from datamanager.services import regions as region_service
 from datamanager.services import resolve
@@ -231,6 +231,7 @@ def test_settings_tools_has_build_button_and_enqueues(client, monkeypatch):
     assert "Valhalla (compiled)" in html and "/settings/tools/valhalla/build" in html
     monkeypatch.setattr("datamanager.blueprints.settings.routes.enqueue_build", lambda key: "job")
     monkeypatch.setattr(valhalla_build, "PREREQUISITES", ())
+    monkeypatch.setattr(built_tools, "_live_build", lambda key: True)  # the enqueue above is faked: pretend its job is queued
     response = client.post("/settings/tools/valhalla/build")
     assert response.status_code == 200 and valhalla_build.read_state()["status"] == "queued"
     assert client.post("/settings/tools/valhalla/build").status_code == 422  # already queued

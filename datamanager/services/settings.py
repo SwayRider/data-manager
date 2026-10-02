@@ -36,6 +36,7 @@ GROUPS = {
     "download": "Download sources",
     "run": "Resources",
     "tool": "Tool versions",
+    "pelias": "Pelias",
 }
 
 SETTINGS: tuple[SettingDef, ...] = (
@@ -95,6 +96,15 @@ SETTINGS: tuple[SettingDef, ...] = (
                "int", 4, min=1, max=64),
     SettingDef("tool.elasticsearch_version", "tool", "Elasticsearch version", "Version used for Pelias.",
                "str", "7.17.28", pattern=r"\d+(\.\d+){1,2}"),
+    SettingDef("tool.pelias_ref", "tool", "Pelias importers version",
+               "Git branch or tag cloned for every Pelias repository (schema, whosonfirst, ...). The resulting commits are recorded with the build.",
+               "str", "master", pattern=r"[A-Za-z0-9._/-]+"),
+    SettingDef("pelias.es_work_dir", "pelias", "Elasticsearch work directory",
+               "Absolute path where the temporary Elasticsearch of a Pelias run keeps its data and snapshots (bind mounts, removed when the "
+               "container stops). Put it on a fast disk. Empty uses work/<run id>/es in the data root.",
+               "str", "", pattern=r"/[^\s]*"),
+    SettingDef("pelias.es_heap", "pelias", "Elasticsearch heap", "JVM heap of that Elasticsearch, e.g. 4g.",
+               "str", "4g", pattern=r"\d+[gGmM]"),
 )
 BY_KEY = {s.key: s for s in SETTINGS}
 

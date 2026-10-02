@@ -25,6 +25,9 @@
         <td class="muted">built by data-manager</td>
         <td>{% if s.status != 'building' %}<button class="primary" hx-post="{{ url_for('settings.tool_build', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML"
               {% if s.status in ('ok', 'outdated') %}hx-confirm="Rebuild {{ tool.label }}? The current build stays until the new one works."{% endif %}>{{ 'Rebuild' if s.status in ('ok', 'outdated') else 'Build' }}</button>{% endif %}</td>
+        {% elif tool.kind == 'library' %}
+        <td class="muted">system library</td>
+        <td><button hx-post="{{ url_for('settings.tool_detect', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML">Re-detect</button></td>
         {% else %}
         <td>
           <form class="add-region" hx-post="{{ url_for('settings.tool_path', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML">
@@ -42,12 +45,14 @@
       <tr><td colspan="6">
         <details {{ 'open' if s.status == 'missing' and tool.required }}><summary>How to install on Debian</summary>
           {% if tool.apt %}<pre>sudo apt install {{ tool.apt.split(' ')[0] }}</pre>{% endif %}
-          {% if tool.install_help %}<p class="muted">{{ tool.install_help }}</p>{% endif %}
+          {% if tool.install_help %}{% if '\n' in tool.install_help %}{% set lines = tool.install_help.split('\n') %}
+          <p class="muted">{{ lines[0] }}</p><pre>{{ lines[1:-1]|join('\n') }}</pre><p class="muted">{{ lines[-1] }}</p>
+          {% else %}<p class="muted">{{ tool.install_help }}</p>{% endif %}{% endif %}
         </details>
       </td></tr>
       {% endif %}
     </tbody>
     {% endfor %}
   </table>
-  <p class="muted">Valhalla is compiled by data-manager itself (Build button); the Pelias repositories will be too.</p>
+  <p class="muted">Valhalla and the Pelias importers are built by data-manager itself (Build button).</p>
 </div>

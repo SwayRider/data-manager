@@ -85,8 +85,42 @@ def _run(tool: ToolDef, path: str, override: str | None, now: datetime.datetime)
     return ToolStatus(tool.key, "ok", path, text, "", override, now)
 
 
+def _detect_library(tool: ToolDef, now: datetime.datetime) -> ToolStatus:
+    """A system library: version and location from pkg-config (or ldconfig), and its data files in one of `tool.data_dirs`."""
+    version = path = None
+    if shutil.which("pkg-config") and tool.pkg_config:
+        try:
+            proc = subprocess.run(["pkg-config", "--modversion", tool.pkg_config], capture_output=True, text=True, timeout=VERSION_TIMEOUT_S)
+            if proc.returncode == 0 and proc.stdout.strip():
+                version = proc.stdout.strip()
+                libdir = subprocess.run(["pkg-config", "--variable=libdir", tool.pkg_config], capture_output=True, text=True, timeout=VERSION_TIMEOUT_S)
+                path = libdir.stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if version is None and shutil.which("ldconfig"):
+        try:
+            listing = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, timeout=VERSION_TIMEOUT_S).stdout
+        except (OSError, subprocess.SubprocessError):
+            listing = ""
+        for line in listing.splitlines():
+            if f"lib{tool.key}.so" in line:
+                path = line.rsplit("=>", 1)[-1].strip()
+                version = "?"
+                break
+    if version is None:
+        return ToolStatus(tool.key, "missing", None, None, "", None, now)
+    if tool.data_dirs:
+        candidates = [os.environ.get(d[1:], "") if d.startswith("$") else d for d in tool.data_dirs]
+        if not any(c and os.path.exists(os.path.join(c, tool.data_marker)) for c in candidates):
+            return ToolStatus(tool.key, "error", path, version, "installed, but its data files were not found in " + ", ".join(c for c in candidates if c)
+                              + " (download them, see below)", None, now)
+    return ToolStatus(tool.key, "ok", path, version, "", None, now)
+
+
 def _detect_now(session: Session, tool: ToolDef) -> ToolStatus:
     now = datetime.datetime.now(datetime.UTC)
+    if tool.kind == "library":
+        return _detect_library(tool, now)
     override = settings_service.get_raw(session, settings_service.TOOLPATH_PREFIX + tool.key) or None
     path, problem = _locate(tool, override)
     if path is None:
@@ -97,9 +131,9 @@ def _detect_now(session: Session, tool: ToolDef) -> ToolStatus:
 
 
 def _detect_built(session: Session, tool: ToolDef) -> ToolStatus:
-    from datamanager.services import valhalla_build  # lazy: it uses this module for the prerequisites
+    from datamanager.services.built_tools import BUILDERS  # lazy: the builders use this module for the prerequisites
 
-    found = valhalla_build.detect(session)
+    found = BUILDERS[tool.key].detect(session)
     return ToolStatus(tool.key, found["status"], found["path"], found["version"], found["message"], None, datetime.datetime.now(datetime.UTC))
 
 
@@ -125,6 +159,8 @@ def set_path(session: Session, key: str, path: str) -> ToolStatus:
     """Save (or clear, when blank) a custom binary path and re-detect that tool."""
     if key not in BY_KEY:
         raise ValidationError(f"Unknown tool: {key}")
+    if BY_KEY[key].kind != "binary" and BY_KEY[key].kind != "file":
+        raise ValidationError(f"{BY_KEY[key].label} has no custom path.")
     path = path.strip()
     if len(path) > 500:
         raise ValidationError("Path is too long.")

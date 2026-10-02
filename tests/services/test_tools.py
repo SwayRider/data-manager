@@ -94,4 +94,27 @@ def test_registry_is_complete():
     assert len(keys) == len(set(keys))
     for t in registry.TOOLS:
         assert t.apt or t.install_help, f"{t.key} has no install hint"
-        assert t.kind in ("file", "built") or t.binaries
+        assert t.kind in ("file", "built", "library") or t.binaries
+
+
+def test_library_tool_reports_missing_data_files(db_session, tmp_path, monkeypatch):
+    tool = registry.ToolDef("libfake", "libfake", "tests", kind="library", pkg_config="libfake",
+                            data_dirs=(str(tmp_path / "share"),), data_marker="models")
+    monkeypatch.setattr(svc, "TOOLS", (tool,))
+    monkeypatch.setattr(svc, "BY_KEY", {"libfake": tool})
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    monkeypatch.setenv("PATH", str(bindir))
+    assert svc.detect(db_session, "libfake").status == "missing"  # no pkg-config, no ldconfig on this PATH
+    _script(bindir / "pkg-config", "1.1.0")
+    status = svc.detect(db_session, "libfake", force=True)
+    assert status.status == "error" and status.version == "1.1.0" and "data files" in status.message
+    (tmp_path / "share" / "models").mkdir(parents=True)
+    assert svc.detect(db_session, "libfake", force=True).status == "ok"
+    with pytest.raises(ValidationError):
+        svc.set_path(db_session, "libfake", "/usr/lib/x.so")
+
+
+def test_libpostal_is_a_required_tool_with_install_help():
+    tool = registry.BY_KEY["libpostal"]
+    assert tool.required and tool.kind == "library" and "bootstrap.sh" in tool.install_help and "ldconfig" in tool.install_help
