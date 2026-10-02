@@ -117,10 +117,10 @@ class FetchOutcome:
     md5_ok: bool | None = None  # checked against the `<url>.md5` sidecar; None = no sidecar
 
 
-def _head(url: str, timeout: float) -> requests.Response:
+def _head(url: str, timeout: float, headers: dict | None = None) -> requests.Response:
     for attempt in range(1, ATTEMPTS + 1):
         try:
-            response = requests.head(url, allow_redirects=True, timeout=timeout)
+            response = requests.head(url, allow_redirects=True, timeout=timeout, headers=headers)
             break
         except requests.TooManyRedirects as exc:
             raise DownloadError(f"Could not reach {url}: {exc}", url=url, redirect_loop=True) from exc
@@ -143,12 +143,12 @@ def _unchanged(record: DownloadRecord | None, etag: str | None, modified: str | 
     return bool(modified and record.upstream_modified and modified == record.upstream_modified)
 
 
-def _stream_single(url: str, temp: Path, total: int, timeout: float, progress_cb) -> tuple[int, int]:
+def _stream_single(url: str, temp: Path, total: int, timeout: float, progress_cb, extra: dict | None = None) -> tuple[int, int]:
     """One connection into `temp`, resuming with a Range request after a drop. Returns (size, total).
     A server that ignores Range restarts from zero."""
     size, failures = 0, 0
     while True:
-        headers = {"Range": f"bytes={size}-"} if size else {}
+        headers = {**(extra or {}), **({"Range": f"bytes={size}-"} if size else {})}
         try:
             with requests.get(url, stream=True, allow_redirects=True, timeout=(timeout, 60), headers=headers) as response:
                 if response.status_code >= 400:
@@ -173,7 +173,7 @@ def _stream_single(url: str, temp: Path, total: int, timeout: float, progress_cb
             time.sleep(RETRY_PAUSE_S * failures)
 
 
-def _fetch_segment(url: str, fd: int, start: int, end: int, timeout: float, stop: threading.Event, counter: list, lock) -> None:
+def _fetch_segment(url: str, fd: int, start: int, end: int, timeout: float, stop: threading.Event, counter: list, lock, extra: dict | None = None) -> None:
     """Bytes start..end (inclusive) written at their offsets. Reconnects (fresh connection, from where it
     stopped) after an error or when the connection runs slower than SLOW_BPS for SLOW_WINDOW_S."""
     pos, failures = start, 0
@@ -181,7 +181,7 @@ def _fetch_segment(url: str, fd: int, start: int, end: int, timeout: float, stop
         got = 0
         try:
             with requests.get(url, stream=True, allow_redirects=True, timeout=(timeout, 60),
-                              headers={"Range": f"bytes={pos}-{end}"}) as response:
+                              headers={**(extra or {}), "Range": f"bytes={pos}-{end}"}) as response:
                 if response.status_code == 200:
                     raise _NoRanges()
                 if response.status_code == 429 or response.status_code >= 500:
@@ -219,7 +219,7 @@ def _fetch_segment(url: str, fd: int, start: int, end: int, timeout: float, stop
             time.sleep(RETRY_PAUSE_S * failures)
 
 
-def _stream_segments(url: str, temp: Path, total: int, timeout: float, progress_cb, connections: int) -> tuple[int, int]:
+def _stream_segments(url: str, temp: Path, total: int, timeout: float, progress_cb, connections: int, extra: dict | None = None) -> tuple[int, int]:
     segments = [(start, min(start + SEGMENT_BYTES, total) - 1) for start in range(0, total, SEGMENT_BYTES)]
     stop, lock, counter = threading.Event(), threading.Lock(), [0]
     fd = os.open(temp, os.O_RDWR | os.O_CREAT | os.O_TRUNC)
@@ -227,7 +227,7 @@ def _stream_segments(url: str, temp: Path, total: int, timeout: float, progress_
         os.ftruncate(fd, total)
         started = time.monotonic()
         with ThreadPoolExecutor(max_workers=max(1, connections)) as pool:
-            pending = {pool.submit(_fetch_segment, url, fd, s, e, timeout, stop, counter, lock) for s, e in segments}
+            pending = {pool.submit(_fetch_segment, url, fd, s, e, timeout, stop, counter, lock, extra) for s, e in segments}
             try:
                 while pending:
                     done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
@@ -246,13 +246,14 @@ def _stream_segments(url: str, temp: Path, total: int, timeout: float, progress_
     return total, total
 
 
-def _stream(url: str, temp: Path, total: int, timeout: float, progress_cb, connections: int = 1, ranges: bool = False) -> tuple[int, int]:
+def _stream(url: str, temp: Path, total: int, timeout: float, progress_cb, connections: int = 1, ranges: bool = False,
+            extra: dict | None = None) -> tuple[int, int]:
     if ranges and total >= PARALLEL_MIN_BYTES:
         try:
-            return _stream_segments(url, temp, total, timeout, progress_cb, connections)
+            return _stream_segments(url, temp, total, timeout, progress_cb, connections, extra)
         except _NoRanges:
             temp.unlink(missing_ok=True)  # server cannot do ranges after all: plain stream
-    return _stream_single(url, temp, total, timeout, progress_cb)
+    return _stream_single(url, temp, total, timeout, progress_cb, extra)
 
 
 def _hash_file(path: Path, progress_cb, with_md5: bool = False) -> tuple[str, str | None]:
@@ -290,12 +291,13 @@ def fetch(
     timeout: float = 30,
     connections: int = 1,
     md5_url: str | None = None,
+    headers: dict | None = None,
 ) -> FetchOutcome:
     """Download `url` as a new version of `source_key`, unless upstream says nothing changed since the
     newest existing version (ETag, else Last-Modified) — then that version is returned as `unchanged`.
     Big files are fetched as short Range segments (`connections` in parallel); a `<url>.md5` sidecar
-    (`md5_url`) is verified when it exists."""
-    head = _head(url, timeout)
+    (`md5_url`) is verified when it exists. `headers` (e.g. an Authorization token) go on every request."""
+    head = _head(url, timeout, headers)
     etag = head.headers.get("ETag")
     modified = head.headers.get("Last-Modified")
     existing = versions(session, source_key)
@@ -322,7 +324,7 @@ def fetch(
     temp = target_dir / (filename + ".part")
     expected_md5 = _expected_md5(md5_url, timeout)
     try:
-        size, total = _stream(url, temp, total, timeout, progress_cb, connections=connections, ranges=ranges)
+        size, total = _stream(url, temp, total, timeout, progress_cb, connections=connections, ranges=ranges, extra=headers)
         if total and size != total:
             raise DownloadError(f"{url}: received {size} bytes, expected {total}", url=url)
         if size == 0:

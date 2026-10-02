@@ -25,7 +25,7 @@ def _global_context(values: dict | None = None, error: str | None = None, saved:
     if values:  # keep what was typed after a validation error
         for group in groups:
             for entry in group["settings"]:
-                if entry["def"].key in values:
+                if entry["def"].key in values and not entry["def"].secret:
                     entry["value"] = values[entry["def"].key]
     return {"groups": groups, "error": error, "saved": saved}
 
@@ -55,8 +55,9 @@ def index():
 @bp.post("/global")
 def save_global():
     values = {k: v for k, v in request.form.items() if k in settings_service.BY_KEY}
+    clear = frozenset(k for k in settings_service.BY_KEY if request.form.get(k + ".clear"))
     try:
-        settings_service.save(SessionLocal(), values)
+        settings_service.save(SessionLocal(), values, clear)
     except ValidationError as exc:
         SessionLocal().rollback()
         return render_template("settings/_form.html", **_global_context(values, exc.message)), 422

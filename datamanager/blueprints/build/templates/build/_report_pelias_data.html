@@ -1,0 +1,13 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}<p>{{ summary.sources }} source(s): {{ summary.downloaded }} downloaded, {{ summary.unchanged }} unchanged upstream,
+  {{ summary.missing }} missing, {{ summary.failed }} failed, {{ summary.skipped }} skipped. {{ summary.bytes|filesize }} in the versions used.</p>{% endif %}
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+<table>
+  <thead><tr><th>Source</th><th>Kind</th><th>Status</th><th>Version</th><th>Size</th><th>Detail</th></tr></thead>
+  <tbody>
+  {% for s in run.report_json.sources %}
+    <tr><td><code>{{ s.key }}</code></td><td>{{ s.kind }}</td><td>{{ s.status }}</td><td>{{ s.get('version', '') }}</td>
+        <td>{% if s.get('size') %}{{ s.size|filesize }}{% endif %}</td><td class="muted">{{ s.detail }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>

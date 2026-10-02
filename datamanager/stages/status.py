@@ -14,6 +14,8 @@ from datamanager.services import assets, downloads
 from datamanager.stages.download_osm import osm_source_key, planned_paths
 from datamanager.stages.download_planet import PLANET_KEY, STALE_DAYS, _age_days
 from datamanager.stages.border import border_fingerprint, plan_inputs as border_inputs
+from datamanager.stages.download_pelias import planned as pelias_planned
+from datamanager.services import pelias_sources
 from datamanager.stages.download_srtm import planned_tiles, srtm_fingerprint
 from datamanager.stages.download_tiles import STALE_DAYS as TILES_STALE_DAYS, TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
@@ -124,6 +126,21 @@ def _srtm(session, config_id, resolved) -> StageStatus:
     return StageStatus("ok", f"{summary.get('tiles', len(names))} tiles ({summary.get('missing', 0)} over open sea).")
 
 
+def _pelias_data(session, config_id, resolved) -> StageStatus:
+    items = pelias_planned(session, resolved)
+    run = (
+        session.query(BuildRun)
+        .filter(BuildRun.stage_key == "download-pelias-data", BuildRun.config_profile_id == config_id, BuildRun.status == "approved")
+        .order_by(BuildRun.id.desc()).first()
+    )
+    if run is None:
+        return StageStatus("todo", f"{len(items)} source(s) to download.")
+    summary = (run.report_json or {}).get("summary", {})
+    if summary.get("fingerprint") != pelias_sources.fingerprint(items):
+        return StageStatus("outdated", "The regions need other Pelias sources than the last run fetched.")
+    return StageStatus("ok", f"{summary.get('sources', len(items))} source(s) fetched.")
+
+
 def _border(session, config_id, resolved) -> StageStatus | None:
     plan = border_inputs(session, config_id, resolved)
     if plan.problems or not plan.regions:
@@ -213,6 +230,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "download-osm": lambda: _geofabrik(session, resolved),
         "polygons": lambda: _polygons(session, config_id, resolved),
         "download-srtm": lambda: _srtm(session, config_id, resolved),
+        "download-pelias-data": lambda: _pelias_data(session, config_id, resolved),
         "border": lambda: _border(session, config_id, resolved),
         "valhalla": lambda: _valhalla(session, config_id, resolved),
         "styles": lambda: _styles(session, config_id),

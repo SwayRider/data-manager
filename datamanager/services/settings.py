@@ -29,6 +29,7 @@ class SettingDef:
     schemes: tuple[str, ...] = ("http", "https")
     requires: tuple[str, ...] = ()  # substrings a URL template must contain
     pattern: str | None = None  # full-match regex for strings
+    secret: bool = False  # never shown again after saving; blank on save keeps it, a clear checkbox removes it
 
 
 GROUPS = {
@@ -77,6 +78,14 @@ SETTINGS: tuple[SettingDef, ...] = (
                "url", "https://naturalearth.s3.amazonaws.com/"),
     SettingDef("download.land_polygons", "download", "OSM land polygons", "Split land polygons zip (EPSG:4326).",
                "url", "https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip"),
+    SettingDef("download.wof", "download", "Who's On First", "Base URL of the WOF distribution (sqlite/inventory.json and the per-country bundles).",
+               "url", "https://data.geocode.earth/wof/dist"),
+    SettingDef("download.geonames", "download", "GeoNames", "Base URL of the GeoNames exports (dump/allCountries.zip, zip/<CC>.zip).",
+               "url", "https://download.geonames.org/export"),
+    SettingDef("download.openaddresses", "download", "OpenAddresses", "Base URL of the OpenAddresses batch API.",
+               "url", "https://batch.openaddresses.io"),
+    SettingDef("download.placeholder", "download", "Pelias placeholder store", "Pinned store.sqlite3.gz of the Placeholder service.",
+               "url", "https://data.geocode.earth/placeholder/2021-08-01/store.sqlite3.gz"),
     SettingDef("run.max_workers", "run", "Max parallel workers", "Upper bound for parallel per-region/tile jobs.",
                "int", 2, min=1, max=64),
     SettingDef("run.extract_memory_gb", "run", "Country extraction memory (GB)",
@@ -103,6 +112,10 @@ SETTINGS: tuple[SettingDef, ...] = (
                "Absolute path where the temporary Elasticsearch of a Pelias run keeps its data and snapshots (bind mounts, removed when the "
                "container stops). Put it on a fast disk. Empty uses work/<run id>/es in the data root.",
                "str", "", pattern=r"/[^\s]*"),
+    SettingDef("pelias.openaddresses_token", "pelias", "OpenAddresses token",
+               "API token of batch.openaddresses.io, used by the Pelias downloads. Stored in the database as plain text, never shown again "
+               "and not part of any configuration hash. Without it the OpenAddresses downloads are skipped.",
+               "str", "", pattern=r"\S+", secret=True),
     SettingDef("pelias.es_heap", "pelias", "Elasticsearch heap", "JVM heap of that Elasticsearch, e.g. 4g.",
                "str", "4g", pattern=r"\d+[gGmM]"),
 )
@@ -166,14 +179,20 @@ def _clean(definition: SettingDef, raw) -> str | int | None:
     return text
 
 
-def save(session: Session, values: dict[str, str]) -> None:
-    """Validate and store submitted values (only the given keys); blank or default resets. One commit."""
+def save(session: Session, values: dict[str, str], clear: frozenset[str] = frozenset()) -> None:
+    """Validate and store submitted values (only the given keys); blank or default resets, except secrets: blank keeps
+    the saved secret and only a key in `clear` removes it. One commit."""
     cleaned: dict[str, str | int | None] = {}
     for key, raw in values.items():
         definition = BY_KEY.get(key)
         if definition is None:
             raise ValidationError(f"Unknown setting: {key}")
+        if definition.secret and key not in clear and not str(raw or "").strip():
+            continue
         cleaned[key] = _clean(definition, raw)
+    for key in clear:
+        if key in BY_KEY and BY_KEY[key].secret:
+            cleaned[key] = None
     for key, value in cleaned.items():
         set_raw(session, key, None if value == BY_KEY[key].default else value)
     session.commit()

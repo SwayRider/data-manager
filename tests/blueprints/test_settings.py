@@ -95,3 +95,20 @@ def test_set_tool_path_and_errors(client, fake_tool, tmp_path):
     assert "does not exist" in client.post("/settings/tools/faketool/path", data={"path": "/no/such/bin"}).get_data(as_text=True)
     assert client.post("/settings/tools/nope/detect").status_code == 404
     assert client.post("/settings/tools/nope/path", data={"path": "x"}).status_code == 404
+
+
+def test_secret_setting_is_saved_hidden_kept_and_removable(client):
+    key = "pelias.openaddresses_token"
+    client.post("/settings/global", data={key: "s3cr3t-token"}, headers=HX)
+    assert settings_service.get(SessionLocal(), key) == "s3cr3t-token"
+    page = client.get("/settings/").get_data(as_text=True)
+    assert "s3cr3t-token" not in page and "Remove the saved value" in page
+    client.post("/settings/global", data={key: ""}, headers=HX)  # blank save keeps it
+    assert settings_service.get(SessionLocal(), key) == "s3cr3t-token"
+    client.post("/settings/global", data={key: "", key + ".clear": "1"}, headers=HX)
+    assert settings_service.get(SessionLocal(), key) == ""
+
+
+def test_secret_not_echoed_after_validation_error(client):
+    response = client.post("/settings/global", data={"pelias.openaddresses_token": "has space", "pelias.es_heap": "bad"}, headers=HX)
+    assert response.status_code == 422 and "has space" not in response.get_data(as_text=True)

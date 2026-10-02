@@ -8,6 +8,7 @@ from datamanager.services import downloads, resolve, runs
 from datamanager.services import settings as settings_service
 from datamanager.stages.border import plan_inputs as border_inputs
 from datamanager.stages.download_osm import planned_paths
+from datamanager.stages.download_pelias import planned as pelias_planned
 from datamanager.stages.download_planet import PLANET_KEY
 from datamanager.stages.download_srtm import planned_tiles
 from datamanager.stages.download_tiles import TILES_KEY
@@ -50,6 +51,10 @@ STAGES = (
      "Builds each region's routing data (tiles.tar, admin and timezone databases, and the edge polylines Pelias uses) "
      "from its approved full PBF and the approved elevation tiles. Needs Valhalla compiled under Settings → Tools; "
      "regions whose inputs did not change are skipped."),
+    ("download-pelias-data", "Download Pelias data",
+     "Fetches what the Pelias import loads as versioned downloads: the Placeholder store, GeoNames, the Who's On First bundles "
+     "of every core and overlap country, GeoNames postal files, official locality polygons and the OpenAddresses sources "
+     "(needs the token of Settings → Pelias, otherwise those are skipped). Unchanged sources are not fetched again."),
     ("styles", "Map styles",
      "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
      "URLs of Settings → Public URLs). Needs only the configuration."),
@@ -103,6 +108,8 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "download-srtm" and not planned_tiles(resolved):
             states[key] = "No region has an SRTM box."
+        elif key == "download-pelias-data" and not pelias_planned(session, resolved):
+            states[key] = "The configuration has no core or overlap country with a Geofabrik path."
         elif key == "polygons" and not any(r["core"] for r in resolved["regions"]):
             states[key] = "No region has a core country."
         elif key == "valhalla":
