@@ -200,17 +200,30 @@ def reject(run_id: int):
 
 # ---- downloads: versions, pinning, cleanup -------------------------------------------------------------------------
 
-def _downloads_context(cleanup=None, error=None):
+OPEN_ROWS = 8  # a download group with at most this many versions starts expanded
+
+
+def _downloads_context(cleanup=None, error=None, open_group=None):
+    """Versions grouped by the kind of their source key (`osm`, `srtm`, ...): one flat row list per group."""
     session = SessionLocal()
-    sources = []
+    groups: dict[str, dict] = {}
     for key in downloads.source_keys(session):
-        found = downloads.versions(session, key)
         selected = downloads.resolve_version(session, key)
-        sources.append({"key": key, "versions": found, "selected_id": selected.id if selected else None})
-    return {"sources": sources, "cleanup": cleanup, "error": error, "keep": downloads.KEEP_DEFAULT}
+        group = groups.setdefault(key.split(":", 1)[0], {"kind": key.split(":", 1)[0], "rows": [], "sources": 0, "bytes": 0})
+        group["sources"] += 1
+        group.setdefault("runs", {})
+        for version in downloads.versions(session, key):
+            group["rows"].append({"key": key, "v": version, "in_use": selected is not None and version.id == selected.id})
+            group["bytes"] += version.size_bytes or 0
+            if version.run_id:
+                group["runs"][version.run_id] = group["runs"].get(version.run_id, 0) + 1
+    for group in groups.values():
+        group["open"] = group["kind"] == open_group if open_group else len(group["rows"]) <= OPEN_ROWS
+    return {"groups": list(groups.values()), "cleanup": cleanup, "error": error, "keep": downloads.KEEP_DEFAULT}
 
 
 def _render_downloads(status=200, **kwargs):
+    kwargs.setdefault("open_group", request.form.get("group") or request.args.get("group"))
     template = "build/_downloads.html" if request.headers.get("HX-Request") else "build/downloads.html"
     return render_template(template, **_downloads_context(**kwargs)), status
 
@@ -245,6 +258,17 @@ def delete(record_id: int):
     except ValidationError as exc:
         return _render_downloads(422, error=exc.message)
     return _render_downloads()
+
+
+@bp.post("/downloads/runs/delete")
+def delete_run():
+    run_id = request.form.get("run_id", type=int)
+    group = request.form.get("group") or None
+    if run_id is None:
+        return _render_downloads(422, error="Select a run first.")
+    deleted, skipped = downloads.delete_run_versions(SessionLocal(), run_id, group)
+    note = f"Deleted {deleted} version(s) of run {run_id}." + (f" {skipped} pinned or in-use version(s) were kept." if skipped else "")
+    return _render_downloads(error=note if skipped or not deleted else None, cleanup=None)
 
 
 @bp.post("/downloads/cleanup")

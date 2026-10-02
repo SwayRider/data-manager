@@ -115,11 +115,21 @@ def test_downloads_page_pin_delete_and_cleanup(client, app):
     record = downloads.versions(SessionLocal(), "osm:europe/aa")[0]
     page = client.get("/build/downloads").get_data(as_text=True)
     assert "osm:europe/aa" in page and "in use" in page and "<html" in page
+    assert page.count("<details") == 1 and page.count("<th>Source</th>") == 1  # one group, one header
 
     pinned = client.post(f"/build/downloads/{record.id}/pin", data={"pinned": "1"}, headers=HX).get_data(as_text=True)
     assert "pinned" in pinned and "<html" not in pinned
+    pinned_open = client.post(f"/build/downloads/{record.id}/pin", data={"pinned": "0", "group": "osm"}, headers=HX).get_data(as_text=True)
+    assert "<details class=\"download-group\" open" in pinned_open
+    client.post(f"/build/downloads/{record.id}/pin", data={"pinned": "1"}, headers=HX)
     refused = client.post(f"/build/downloads/{record.id}/delete", headers=HX)
     assert refused.status_code == 422 and "in use" in refused.get_data(as_text=True)
+
+    other = client.post("/build/downloads/runs/delete", data={"group": "osm"}, headers=HX)
+    assert other.status_code == 422
+    kept = client.post("/build/downloads/runs/delete", data={"run_id": record.run_id, "group": "osm"}, headers=HX)
+    assert kept.status_code == 200 and "pinned or in-use" in kept.get_data(as_text=True)  # the in-use version stays
+    assert "Delete all of this run" in client.get("/build/downloads").get_data(as_text=True)
 
     preview = client.post("/build/downloads/cleanup", data={"keep": "1"}, headers=HX).get_data(as_text=True)
     assert "Would delete 0 version(s)" in preview

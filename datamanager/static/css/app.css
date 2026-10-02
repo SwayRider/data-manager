@@ -74,6 +74,10 @@ dialog.modal select { display: block; width: 100%; margin-top: .25rem; }
 
 .resolved-region { border: 1px solid var(--border); border-radius: 6px; padding: .5rem 1rem 1rem; margin-bottom: 1rem; }
 .resolved-region h3 { display: flex; align-items: center; gap: .5rem; margin: .5rem 0; }
+.download-group { border: 1px solid var(--border); border-radius: 6px; padding: .4rem 1rem; margin-bottom: .75rem; }
+.download-group > summary { cursor: pointer; padding: .3rem 0; }
+.download-group > summary .muted { margin-left: .75rem; }
+.download-group > table { margin: .5rem 0 .6rem; }
 .resolved-region h4 { margin: .9rem 0 .3rem; }
 .resolved-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
 .resolved-table th, .resolved-table td { border-bottom: 1px solid var(--border); padding: .3rem .5rem .3rem 0; vertical-align: top; }

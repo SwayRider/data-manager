@@ -497,6 +497,22 @@ def delete_version(session: Session, record: DownloadRecord) -> None:
     _remove(session, record)
 
 
+def delete_run_versions(session: Session, run_id: int, kind: str | None = None) -> tuple[int, int]:
+    """Deletes every version a run fetched (optionally only the sources of one kind such as `srtm`), except pinned
+    or in-use ones. Returns (deleted, skipped)."""
+    query = session.query(DownloadRecord).filter(DownloadRecord.run_id == run_id)
+    if kind:
+        query = query.filter(DownloadRecord.source_key.like(kind + ":%"))
+    deleted = skipped = 0
+    for record in query.all():
+        try:
+            delete_version(session, record)
+            deleted += 1
+        except ValidationError:
+            skipped += 1
+    return deleted, skipped
+
+
 def cleanup(session: Session, keep: int = KEEP_DEFAULT, dry_run: bool = True) -> dict:
     """Delete (or, by default, only list) every version outside the protected set. `bytes` counts files
     that would actually disappear (a file shared with a surviving version stays)."""
