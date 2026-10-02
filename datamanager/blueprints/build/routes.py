@@ -13,6 +13,7 @@ from datamanager.stages.download_planet import PLANET_KEY
 from datamanager.stages.download_srtm import planned_tiles
 from datamanager.stages.download_tiles import TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs
+from datamanager.stages.pelias import plan_inputs as pelias_inputs
 from datamanager.stages.valhalla import plan_inputs as valhalla_inputs
 from datamanager.stages.wof_patch import plan_inputs as wof_patch_inputs
 from datamanager.stages import status as stage_status
@@ -61,6 +62,11 @@ STAGES = (
      "(right-click a country on the Configure map) by OSM administrative boundaries or an official polygon file, and writes "
      "the patched WOF database Pelias reads. Needs the approved country extracts and the approved Pelias data downloads; "
      "countries whose inputs did not change are skipped."),
+    ("pelias", "Pelias index",
+     "Imports each region into a temporary Elasticsearch container (data on the disk set under Settings → Pelias, removed when "
+     "the container stops) from its approved PBF, edge polylines, Who's On First (patched when available), GeoNames and "
+     "OpenAddresses, with the importers built under Settings → Tools. Produces the Elasticsearch snapshot, the production "
+     "pelias.json and the WOF directory of the PIP service. Takes hours for a large region; regions can be built one at a time."),
     ("styles", "Map styles",
      "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
      "URLs of Settings → Public URLs). Needs only the configuration."),
@@ -83,7 +89,9 @@ def filesize(n) -> str:
 def enqueue_run(run_id: int) -> str:
     from datamanager.jobs.queue import queue
 
-    return queue.enqueue("datamanager.jobs.tasks.run_stage", run_id, job_timeout=6 * 3600).id
+    run = runs.get_run(SessionLocal(), run_id)
+    hours = 48 if run is not None and run.stage_key == "pelias" else 6  # a Pelias import of a large region takes hours
+    return queue.enqueue("datamanager.jobs.tasks.run_stage", run_id, job_timeout=hours * 3600).id
 
 
 def _current_config():
@@ -116,6 +124,9 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
             states[key] = "No region has an SRTM box."
         elif key == "download-pelias-data" and not pelias_planned(session, resolved):
             states[key] = "The configuration has no core or overlap country with a Geofabrik path."
+        elif key == "pelias":
+            problems = pelias_inputs(session, config.id, resolved).problems
+            states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "wof-patch":
             problems = wof_patch_inputs(session, resolved).problems
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
@@ -166,7 +177,7 @@ def start(stage_key: str):
     if _stage_states(config).get(stage_key):
         abort(422)
     params = {}
-    if stage_key in ("osm-extract", "valhalla") and request.form.getlist("regions"):
+    if stage_key in ("osm-extract", "valhalla", "pelias") and request.form.getlist("regions"):
         params["regions"] = request.form.getlist("regions")
     if stage_key in ("download-planet", "download-tiles"):
         if request.form.get("use_existing"):

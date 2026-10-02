@@ -22,6 +22,7 @@ from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
 from datamanager.stages.polygons import polygons_fingerprint
 from datamanager.stages.styles import styles_fingerprint
 from datamanager.stages.wof_patch import ASSET_TYPE as WOF_PATCH_ASSET, plan_inputs as wof_patch_inputs
+from datamanager.stages.pelias import ASSET_TYPES as PELIAS_ASSETS, plan_inputs as pelias_inputs
 from datamanager.stages.valhalla import ASSET_TYPES as VALHALLA_ASSETS, plan_inputs as valhalla_inputs
 
 GLOBAL_STAGES = {"download-planet", "download-tiles"}  # not tied to one configuration
@@ -162,6 +163,26 @@ def _wof_patch(session, config_id, resolved) -> StageStatus | None:
     return StageStatus("ok", f"{len(plan.countries)} country(ies) patched from the current inputs.")
 
 
+def _pelias(session, config_id, resolved) -> StageStatus | None:
+    plan = pelias_inputs(session, config_id, resolved)
+    if plan.problems or not plan.regions:
+        return None
+    built, stale = [], []
+    for region in plan.regions:
+        current = [assets.current(session, config_id, t, region.slug) for t in PELIAS_ASSETS.values()]
+        if any(a is None for a in current):
+            stale.append(f"{region.name} (not imported)")
+        else:
+            built.append(region.name)
+            if any(a.meta_json.get("fingerprint") != region.fingerprint for a in current):
+                stale.append(region.name)
+    if not built:
+        return StageStatus("todo", f"{len(plan.regions)} region(s) to import.")
+    if stale:
+        return StageStatus("outdated", "Needs a run: " + ", ".join(stale) + ".")
+    return StageStatus("ok", f"{len(plan.regions)} region(s) imported from the current inputs.")
+
+
 def _border(session, config_id, resolved) -> StageStatus | None:
     plan = border_inputs(session, config_id, resolved)
     if plan.problems or not plan.regions:
@@ -253,6 +274,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "download-srtm": lambda: _srtm(session, config_id, resolved),
         "download-pelias-data": lambda: _pelias_data(session, config_id, resolved),
         "wof-patch": lambda: _wof_patch(session, config_id, resolved),
+        "pelias": lambda: _pelias(session, config_id, resolved),
         "border": lambda: _border(session, config_id, resolved),
         "valhalla": lambda: _valhalla(session, config_id, resolved),
         "styles": lambda: _styles(session, config_id),

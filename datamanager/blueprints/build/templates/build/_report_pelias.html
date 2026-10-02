@@ -1,0 +1,20 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}<p>{{ summary.regions }} region(s): {{ summary.built }} imported, {{ summary.unchanged }} unchanged, {{ summary.failed }} failed.
+  Importers {{ summary.pelias }}, Elasticsearch {{ summary.elasticsearch }}.</p>{% endif %}
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% if run.report_json.get('cleaned_up') %}<p class="muted">Removed leftovers of earlier runs: {{ run.report_json.cleaned_up|join(', ') }}.</p>{% endif %}
+{% for r in run.report_json.pelias %}
+  <h4>{{ r.name }} — {% if r.status == 'failed' %}failed{% else %}{{ r.result }}{% endif %}</h4>
+  {% if r.status == 'failed' %}
+    <p class="error">{{ r.message }}</p>
+    {% if r.log %}<details open><summary>Import log (last lines)</summary><pre class="build-log">{{ r.log|join('\n') }}</pre></details>{% endif %}
+  {% else %}
+    <p>Index <code>{{ r.index }}</code>: {{ r.docs }} documents{% if r.snapshot_bytes %}, snapshot {{ r.snapshot_bytes|filesize }}{% endif %}{% if r.seconds is not none %}, {{ r.seconds }} s{% endif %}.</p>
+    {% if r.importers %}
+    <table>
+      <thead><tr><th>Importer</th><th>Documents added</th><th>Total</th><th>Time</th></tr></thead>
+      <tbody>{% for i in r.importers %}<tr><td>{{ i.name }}</td><td>{{ i.docs }}</td><td>{{ i.total }}</td><td>{{ i.seconds }} s</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  {% endif %}
+{% endfor %}
