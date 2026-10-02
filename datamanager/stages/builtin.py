@@ -10,7 +10,8 @@ from datamanager.stages.noop import NoOpStage
 from datamanager.stages.polygons import PolygonsStage
 from datamanager.stages.registry import default_registry
 from datamanager.stages.styles import StylesStage
+from datamanager.stages.valhalla import ValhallaStage
 
 for _stage in (NoOpStage, DownloadOsmStage, PolygonsStage, OsmExtractStage, DownloadPlanetStage, ExtractCountriesStage,
-               DownloadTilesStage, StylesStage, DownloadSrtmStage, BorderStage):
+               DownloadTilesStage, StylesStage, DownloadSrtmStage, BorderStage, ValhallaStage):
     default_registry.register(_stage)

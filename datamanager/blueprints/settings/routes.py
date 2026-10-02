@@ -5,6 +5,7 @@ from datamanager.db import SessionLocal
 from datamanager.errors import ValidationError
 from datamanager.services import settings as settings_service
 from datamanager.services import tools as tools_service
+from datamanager.services import valhalla_build
 from datamanager.tools import BY_KEY
 
 bp = Blueprint("settings", __name__, url_prefix="/settings", template_folder="templates")
@@ -33,7 +34,10 @@ def _tools_context(error: str | None = None) -> dict:
     rows = tools_service.detect_all(SessionLocal())
     required_bad = [t.label for t, s in rows if t.required and not s.ok]
     optional_bad = [t.label for t, s in rows if not t.required and not s.ok]
-    return {"rows": rows, "required_bad": required_bad, "optional_bad": optional_bad, "tools_error": error}
+    builds = {"valhalla": {**valhalla_build.read_state(), "log": valhalla_build.log_tail()}}
+    building = any(s.status == "building" for _, s in rows)
+    return {"rows": rows, "required_bad": required_bad, "optional_bad": optional_bad, "tools_error": error,
+            "builds": builds, "building": building}
 
 
 @bp.get("/")
@@ -84,4 +88,31 @@ def tool_path(key: str):
     except ValidationError as exc:
         SessionLocal().rollback()
         return _tools_block(exc.message, 422)
+    return _tools_block()
+
+
+def enqueue_build(key: str) -> str:
+    from datamanager.jobs.queue import queue
+
+    return queue.enqueue("datamanager.jobs.tasks.build_tool", key, job_timeout=6 * 3600).id
+
+
+@bp.get("/tools")
+def tools_block():
+    return _tools_block()
+
+
+@bp.post("/tools/<key>/build")
+def tool_build(key: str):
+    if key not in BY_KEY or BY_KEY[key].kind != "built":
+        abort(404)
+    session = SessionLocal()
+    try:
+        valhalla_build.request(session)
+    except ValidationError as exc:
+        return _tools_block(exc.message, 422)
+    try:
+        enqueue_build(key)
+    except Exception as exc:  # broker down: say so instead of leaving the row "queued"
+        valhalla_build._write_state({**valhalla_build.read_state(), "status": "failed", "message": f"could not queue the build: {exc}"})
     return _tools_block()

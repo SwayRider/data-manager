@@ -59,3 +59,12 @@ def run_stage(run_id: int) -> dict:
         return {"status": "failed", "run_id": run.id}
     runs.finish(session, run, result.report)
     return {"status": run.status, "run_id": run.id}
+
+
+def build_tool(key: str) -> dict:
+    """Compile a tool that data-manager builds itself (Settings → Tools). Currently only Valhalla."""
+    from datamanager.services import valhalla_build
+
+    if key != "valhalla":
+        raise ValueError(f"No build for tool {key}")
+    return valhalla_build.build(SessionLocal())

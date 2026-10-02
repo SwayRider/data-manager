@@ -94,4 +94,4 @@ def test_registry_is_complete():
     assert len(keys) == len(set(keys))
     for t in registry.TOOLS:
         assert t.apt or t.install_help, f"{t.key} has no install hint"
-        assert t.kind == "file" or t.binaries
+        assert t.kind in ("file", "built") or t.binaries

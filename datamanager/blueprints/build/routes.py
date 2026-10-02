@@ -12,6 +12,7 @@ from datamanager.stages.download_planet import PLANET_KEY
 from datamanager.stages.download_srtm import planned_tiles
 from datamanager.stages.download_tiles import TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs
+from datamanager.stages.valhalla import plan_inputs as valhalla_inputs
 from datamanager.stages import status as stage_status
 
 bp = Blueprint(
@@ -45,6 +46,10 @@ STAGES = (
     ("download-srtm", "Download elevation (SRTM)",
      "Fetches the 1° SRTM tiles every region needs (core and overlap) as versioned downloads and unpacks them for "
      "Valhalla. Tiles that did not change upstream are not fetched again; open-sea tiles do not exist and are skipped."),
+    ("valhalla", "Valhalla routing data",
+     "Builds each region's routing data (tiles.tar, admin and timezone databases, and the edge polylines Pelias uses) "
+     "from its approved full PBF and the approved elevation tiles. Needs Valhalla compiled under Settings → Tools; "
+     "regions whose inputs did not change are skipped."),
     ("styles", "Map styles",
      "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
      "URLs of Settings → Public URLs). Needs only the configuration."),
@@ -100,6 +105,9 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
             states[key] = "No region has an SRTM box."
         elif key == "polygons" and not any(r["core"] for r in resolved["regions"]):
             states[key] = "No region has a core country."
+        elif key == "valhalla":
+            problems = valhalla_inputs(session, config.id, resolved).problems
+            states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "osm-extract":
             _, problems = plan_inputs(session, config.id, resolved)
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
@@ -142,7 +150,7 @@ def start(stage_key: str):
     if _stage_states(config).get(stage_key):
         abort(422)
     params = {}
-    if stage_key == "osm-extract" and request.form.getlist("regions"):
+    if stage_key in ("osm-extract", "valhalla") and request.form.getlist("regions"):
         params["regions"] = request.form.getlist("regions")
     if stage_key in ("download-planet", "download-tiles"):
         if request.form.get("use_existing"):

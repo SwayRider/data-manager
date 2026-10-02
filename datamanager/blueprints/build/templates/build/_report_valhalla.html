@@ -1,0 +1,14 @@
+{% set summary = run.report_json.get('summary') %}
+<p>{{ summary.regions }} region(s): {{ summary.built }} built{% if summary.valhalla %} with Valhalla {{ summary.valhalla }}{% endif %}.</p>
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+<table class="resolved-table">
+  <tr><th>Region</th><th>Result</th><th>Graph tiles</th><th>Polyline lines</th><th>tiles.tar</th><th>Time</th></tr>
+  {% for r in run.report_json.routing %}
+  <tr><td>{{ r.name }}</td>
+    <td>{% if r.status == 'failed' %}<span class="error">{{ r.message }}</span>{% else %}{{ r.result }}{% endif %}</td>
+    <td>{{ r.graph_tiles if r.graph_tiles is not none }}</td>
+    <td>{{ r.polyline_lines if r.polyline_lines is not none }}</td>
+    <td>{% if r.bytes %}{{ r.bytes.tiles|filesize }}{% endif %}</td>
+    <td>{% if r.seconds is not none %}{{ r.seconds }} s{% endif %}</td></tr>
+  {% endfor %}
+</table>

@@ -36,7 +36,7 @@
     <label>Or register a file already on disk (used in place, never deleted):
       <input name="local_file" placeholder="{{ '/path/to/planet-latest.osm.pbf' if key == 'download-planet' else '/path/to/20260930.pmtiles' }}" style="min-width:24rem"></label>
     {% endif %}
-    {% if key == 'osm-extract' and region_names|length > 1 %}
+    {% if key in ('osm-extract', 'valhalla') and region_names|length > 1 %}
     <fieldset class="regions-pick"><legend class="muted">Regions (none ticked = all)</legend>
       {% for name in region_names %}<label class="inline"><input type="checkbox" name="regions" value="{{ name }}"> {{ name }}</label> {% endfor %}
     </fieldset>

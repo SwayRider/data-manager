@@ -1,4 +1,4 @@
-<div id="tools-block">
+<div id="tools-block"{% if building %} hx-get="{{ url_for('settings.tools_block') }}" hx-trigger="every 4s" hx-swap="outerHTML"{% endif %}>
   <p>
     {% if required_bad %}<span class="badge warn">{{ required_bad|length }} required tool{{ 's' if required_bad|length != 1 }} missing</span> {{ required_bad|join(', ') }}.
     {% else %}<span class="badge">all required tools found</span>{% endif %}
@@ -15,11 +15,17 @@
         <td>{{ tool.label }}{% if not tool.required %} <span class="muted">(optional)</span>{% endif %}</td>
         <td>{% if s.status == 'ok' %}<span class="badge">ok</span>
             {% elif s.status == 'outdated' %}<span class="badge warn">outdated</span>
+            {% elif s.status == 'building' %}<span class="badge">building…</span>
             {% elif s.status == 'error' %}<span class="badge warn">error</span>
             {% else %}<span class="badge {{ 'warn' if tool.required }}">not found</span>{% endif %}
             {% if s.message %}<div class="muted">{{ s.message }}</div>{% endif %}</td>
         <td>{% if s.path %}<code>{{ s.path }}</code>{% if s.version %} <span class="muted">{{ s.version }}</span>{% endif %}{% endif %}</td>
         <td class="muted">{{ tool.needed_by }}</td>
+        {% if tool.kind == 'built' %}
+        <td class="muted">built by data-manager</td>
+        <td>{% if s.status != 'building' %}<button class="primary" hx-post="{{ url_for('settings.tool_build', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML"
+              {% if s.status in ('ok', 'outdated') %}hx-confirm="Rebuild {{ tool.label }}? The current build stays until the new one works."{% endif %}>{{ 'Rebuild' if s.status in ('ok', 'outdated') else 'Build' }}</button>{% endif %}</td>
+        {% else %}
         <td>
           <form class="add-region" hx-post="{{ url_for('settings.tool_path', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML">
             <input name="path" value="{{ s.override or '' }}" placeholder="{{ tool.default_file or '/path/to/' ~ (tool.binaries[0] if tool.binaries else tool.key) }}">
@@ -27,7 +33,11 @@
           </form>
         </td>
         <td><button hx-post="{{ url_for('settings.tool_detect', key=tool.key) }}" hx-target="#tools-block" hx-swap="outerHTML">Re-detect</button></td>
+        {% endif %}
       </tr>
+      {% if builds.get(tool.key) and builds[tool.key].log and s.status in ('building', 'error') %}
+      <tr><td colspan="6"><details {{ 'open' if s.status == 'building' }}><summary>Build log (last lines)</summary><pre>{{ builds[tool.key].log|join('\n') }}</pre></details></td></tr>
+      {% endif %}
       {% if s.status != 'ok' %}
       <tr><td colspan="6">
         <details {{ 'open' if s.status == 'missing' and tool.required }}><summary>How to install on Debian</summary>
@@ -39,5 +49,5 @@
     </tbody>
     {% endfor %}
   </table>
-  <p class="muted">Valhalla and the Pelias repositories are built by data-manager itself (not detected here).</p>
+  <p class="muted">Valhalla is compiled by data-manager itself (Build button); the Pelias repositories will be too.</p>
 </div>

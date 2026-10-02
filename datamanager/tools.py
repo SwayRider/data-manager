@@ -1,8 +1,8 @@
 """Registry of the external tools the pipeline needs; detection lives in `services/tools.py`.
 
 `required` tools are needed by the stages planned for the current phases (a missing one raises a
-warning in the UI); optional ones are only needed later or for a subset of features. Valhalla and
-the Pelias repos are built by data-manager itself into the tools dir and are not listed here."""
+warning in the UI); optional ones are only needed later or for a subset of features. Valhalla (and later
+the Pelias repos) is compiled by data-manager itself into the tools dir (`kind="built"`, Build button in Settings)."""
 from dataclasses import dataclass
 
 
@@ -17,7 +17,7 @@ class ToolDef:
     required: bool = True
     apt: str | None = None  # Debian package(s)
     install_help: str = ""  # shown when there is no simple apt package
-    kind: str = "binary"  # "binary" | "file" (e.g. a jar, no version check)
+    kind: str = "binary"  # "binary" | "file" (e.g. a jar, no version check) | "built" (compiled by us, see services/valhalla_build.py)
     default_file: str | None = None  # kind "file": path relative to the data root
 
 
@@ -41,6 +41,9 @@ TOOLS: tuple[ToolDef, ...] = (
             install_help="`apt install awscli`, or `pip install awscli`."),
     ToolDef("java", "Java (JRE 21+)", "Tiles stage (planetiler, Phase 7)", ("java",), version_args=("-version",),
             min_version=(21,), required=False, apt="openjdk-21-jre-headless"),
+    ToolDef("valhalla", "Valhalla (compiled)", "Valhalla stage", kind="built", required=False,
+            install_help="Needs git, cmake, make and g++. Press Build: the configured version (Settings → Tools → Valhalla version) "
+                         "is cloned and compiled into the data root (tools/valhalla), which takes a while."),
     ToolDef("planetiler", "planetiler.jar", "Tiles stage (Phase 7)", kind="file", required=False,
             default_file="tools/planetiler.jar",
             install_help="Not in apt: download planetiler.jar from https://github.com/onthegomap/planetiler/releases "

@@ -19,6 +19,7 @@ from datamanager.stages.download_tiles import STALE_DAYS as TILES_STALE_DAYS, TI
 from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
 from datamanager.stages.polygons import polygons_fingerprint
 from datamanager.stages.styles import styles_fingerprint
+from datamanager.stages.valhalla import ASSET_TYPES as VALHALLA_ASSETS, plan_inputs as valhalla_inputs
 
 GLOBAL_STAGES = {"download-planet", "download-tiles"}  # not tied to one configuration
 LABELS = {
@@ -143,6 +144,21 @@ def _border(session, config_id, resolved) -> StageStatus | None:
     return StageStatus("ok", f"{len(plan.regions)} outline(s) and {len(plan.pairs)} pair(s) match the current region PBFs.")
 
 
+def _valhalla(session, config_id, resolved) -> StageStatus | None:
+    plan = valhalla_inputs(session, config_id, resolved)
+    if plan.problems or not plan.regions:
+        return None
+    built = [r for r in plan.regions if assets.current(session, config_id, "valhalla-tiles", r.slug) is not None]
+    if not built:
+        return StageStatus("todo", f"{len(plan.regions)} region(s) to build.")
+    stale = [r.name for r in plan.regions
+             if any((a := assets.current(session, config_id, t, r.slug)) is None or a.meta_json.get("fingerprint") != r.fingerprint
+                    for t in VALHALLA_ASSETS.values())]
+    if stale:
+        return StageStatus("outdated", "Needs a run: " + ", ".join(stale) + ".")
+    return StageStatus("ok", f"{len(plan.regions)} region(s) match the current PBFs, elevation and Valhalla build.")
+
+
 def _styles(session, config_id) -> StageStatus:
     newest = (
         session.query(Asset)
@@ -198,6 +214,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "polygons": lambda: _polygons(session, config_id, resolved),
         "download-srtm": lambda: _srtm(session, config_id, resolved),
         "border": lambda: _border(session, config_id, resolved),
+        "valhalla": lambda: _valhalla(session, config_id, resolved),
         "styles": lambda: _styles(session, config_id),
         "osm-extract": lambda: _regions(session, config_id, resolved),
     }

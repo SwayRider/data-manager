@@ -96,8 +96,17 @@ def _detect_now(session: Session, tool: ToolDef) -> ToolStatus:
     return _run(tool, path, override, now)
 
 
+def _detect_built(session: Session, tool: ToolDef) -> ToolStatus:
+    from datamanager.services import valhalla_build  # lazy: it uses this module for the prerequisites
+
+    found = valhalla_build.detect(session)
+    return ToolStatus(tool.key, found["status"], found["path"], found["version"], found["message"], None, datetime.datetime.now(datetime.UTC))
+
+
 def detect(session: Session, key: str, force: bool = False) -> ToolStatus:
     tool = BY_KEY[key]
+    if tool.kind == "built":  # reads a record and the files: cheap, and the worker changes it, so never cached
+        return _detect_built(session, tool)
     with _lock:
         cached = _cache.get(key)
     if cached is not None and not force:
