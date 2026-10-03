@@ -14,6 +14,7 @@ from datamanager.stages.download_srtm import planned_tiles
 from datamanager.stages.download_tiles import TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs
 from datamanager.stages.pelias import plan_inputs as pelias_inputs
+from datamanager.stages.pelias_interpolation import plan_inputs as interpolation_inputs
 from datamanager.stages.valhalla import plan_inputs as valhalla_inputs
 from datamanager.stages.wof_patch import plan_inputs as wof_patch_inputs
 from datamanager.stages import status as stage_status
@@ -68,6 +69,10 @@ STAGES = (
      "the container stops) from its approved PBF, edge polylines, Who's On First (patched when available), GeoNames and "
      "OpenAddresses, with the importers built under Settings → Tools. Produces the Elasticsearch snapshot, the production "
      "pelias.json and the WOF directory of the PIP service. Takes hours for a large region; regions can be built one at a time."),
+    ("pelias-interpolation", "Pelias interpolation",
+     "Builds each region's address interpolation databases (street.db and address.db) with the Pelias interpolation importers "
+     "from its approved edge polylines, the OpenAddresses sources and the house numbers of its PBF. Needs no Elasticsearch; "
+     "takes hours for a large region. Regions whose inputs did not change are skipped."),
     ("styles", "Map styles",
      "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
      "URLs of Settings → Public URLs). Needs only the configuration."),
@@ -91,7 +96,7 @@ def enqueue_run(run_id: int) -> str:
     from datamanager.jobs.queue import queue
 
     run = runs.get_run(SessionLocal(), run_id)
-    hours = 48 if run is not None and run.stage_key == "pelias" else 6  # a Pelias import of a large region takes hours
+    hours = 48 if run is not None and run.stage_key in ("pelias", "pelias-interpolation") else 6  # a Pelias import of a large region takes hours
     return queue.enqueue("datamanager.jobs.tasks.run_stage", run_id, job_timeout=hours * 3600).id
 
 
@@ -127,6 +132,9 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
             states[key] = "The configuration has no core or overlap country with a Geofabrik path."
         elif key == "pelias":
             problems = pelias_inputs(session, config.id, resolved).problems
+            states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
+        elif key == "pelias-interpolation":
+            problems = interpolation_inputs(session, config.id, resolved).problems
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "wof-patch":
             problems = wof_patch_inputs(session, resolved).problems
@@ -189,7 +197,7 @@ def start(stage_key: str):
     if _stage_states(config).get(stage_key):
         abort(422)
     params = {}
-    if stage_key in ("osm-extract", "valhalla", "pelias") and request.form.getlist("regions"):
+    if stage_key in ("osm-extract", "valhalla", "pelias", "pelias-interpolation") and request.form.getlist("regions"):
         params["regions"] = request.form.getlist("regions")
     if stage_key in ("download-planet", "download-tiles"):
         if request.form.get("use_existing"):

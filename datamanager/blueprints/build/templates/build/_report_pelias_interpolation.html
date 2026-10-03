@@ -1,0 +1,19 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}<p>{{ summary.regions }} region(s): {{ summary.built }} built, {{ summary.unchanged }} unchanged, {{ summary.failed }} failed.
+  Importers {{ summary.pelias }}.</p>{% endif %}
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% for r in run.report_json.interpolation %}
+  <h4>{{ r.name }} — {% if r.status == 'failed' %}failed{% else %}{{ r.result }}{% endif %}</h4>
+  {% if r.status == 'failed' %}
+    <p class="error">{{ r.message }}</p>
+  {% else %}
+    {% if r.counts %}<p>{{ r.counts.streets }} streets, {{ r.counts.addresses }} addresses{% if r.sizes %}; street.db {{ r.sizes.street|filesize }}, address.db {{ r.sizes.address|filesize }}{% endif %}{% if r.seconds is not none %}, {{ r.seconds }} s{% endif %}.</p>{% endif %}
+    {% if r.openaddresses %}<p class="muted">OpenAddresses: {{ r.openaddresses.sources }} source(s), {{ r.openaddresses.rows }} usable rows, {{ r.openaddresses.skipped }} without number or street.</p>{% endif %}
+    {% if r.steps %}
+    <table>
+      <thead><tr><th>Step</th><th>Skipped (no matching street)</th><th>Error lines</th><th>Time</th></tr></thead>
+      <tbody>{% for s in r.steps %}<tr><td>{{ s.name }}</td><td>{{ s.skipped if s.skipped is defined else '' }}</td><td>{{ s.errors if s.errors is defined else '' }}</td><td>{{ s.seconds }} s</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  {% endif %}
+{% endfor %}

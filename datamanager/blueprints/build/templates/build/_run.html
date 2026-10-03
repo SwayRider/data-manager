@@ -37,6 +37,7 @@
 {% elif run.report_json.get('styles') is not none %}{% include "build/_report_styles.html" %}
 {% elif run.report_json.get('regions') is not none %}{% include "build/_report_osm_extract.html" %}
 {% elif run.report_json.get('countries') is not none %}{% include "build/_report_countries.html" %}
+{% elif run.report_json.get('interpolation') is not none %}{% include "build/_report_pelias_interpolation.html" %}
 {% elif run.report_json.get('pelias') is not none %}{% include "build/_report_pelias.html" %}
 {% elif run.report_json.get('patch') is not none or run.report_json.get('detect') is not none %}{% include "build/_report_wof_patch.html" %}
 {% elif run.report_json.get('sources') is not none %}{% include "build/_report_pelias_data.html" %}
