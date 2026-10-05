@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ package.tag }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('repo.index') }}">&larr; Repo</a></p>
+<h1>{{ package.tag }} <span class="badge status-{{ 'approved' if package.status == 'complete' else package.status }}">{{ package.status }}</span>
+  {% if package.protected %}<span class="badge">protected</span>{% endif %}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<table class="resolved-table">
+  <tr><th>Configuration</th><td>{{ config.name if config else '-' }}</td></tr>
+  <tr><th>Created</th><td>{{ package.created_at.strftime('%Y-%m-%d %H:%M:%S') }} UTC by {{ package.created_by }}
+      {% if package.build_run_id %}· <a href="{{ url_for('build.run_detail', run_id=package.build_run_id) }}">run {{ package.build_run_id }}</a>{% endif %}</td></tr>
+  <tr><th>Size</th><td>{{ package.size_bytes|filesize }} in {{ package.items|length }} file(s)</td></tr>
+  <tr><th>Folder</th><td><code>{{ package.path }}</code></td></tr>
+  <tr><th>Verified</th><td>{% if package.verified_at %}{{ package.verified_at.strftime('%Y-%m-%d %H:%M') }} UTC{% else %}not yet{% endif %}</td></tr>
+</table>
+
+<h2>Labels</h2>
+<form class="add-region" method="post" action="{{ url_for('repo.labels', tag=package.tag) }}">
+  <label>Labels <textarea name="labels" rows="3" cols="30" placeholder="candidate&#10;live=dev-mini">{% for l in user %}{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}
+{% endfor %}</textarea></label>
+  <label>Note <input name="note" value="{{ package.note }}" maxlength="500" size="40"></label>
+  <label><input type="checkbox" name="protected" value="1" {{ 'checked' if package.protected }}> Protected (never pruned or deleted)</label>
+  <button>Save</button>
+</form>
+<h3>Tags written at packaging time</h3>
+<table class="resolved-table">
+  {% for l in auto %}<tr><th>{{ l.key }}</th><td><code>{{ l.value }}</code></td></tr>{% endfor %}
+</table>
+
+<h2>Files</h2>
+{% for cls, items in by_class.items() %}
+<h3>{{ cls }}</h3>
+<table class="resolved-table">
+  <tr><th>Path</th><th>Region</th><th>Size</th><th>SHA-256</th><th>Source</th></tr>
+  {% for i in items %}
+  <tr><td><code>{{ i.path }}</code></td><td>{{ i.region or '' }}</td><td>{{ i.size_bytes|filesize }}</td><td><code>{{ i.sha256[:16] }}</code></td>
+      <td>{% if i.asset_id %}asset {{ i.asset_id }}{% if i.meta_json.get('run_id') %} · <a href="{{ url_for('build.run_detail', run_id=i.meta_json.run_id) }}">run {{ i.meta_json.run_id }}</a>{% endif %}
+          {% elif i.download_id %}download {{ i.download_id }} <span class="muted">{{ i.meta_json.get('version', '') }}</span>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% endfor %}
+
+<h2>Verify</h2>
+<form class="add-region" method="post" action="{{ url_for('repo.verify', tag=package.tag) }}">
+  <button>Verify all files</button>
+  <span class="muted">Re-reads every file and compares its SHA-256 with package.json (a job). A clean result unlocks the cleanup below.</span>
+</form>
+
+<h2>Cleanup</h2>
+{% include "repo/_cleanup.html" %}
+
+<h2>Delete</h2>
+<form class="add-region" method="post" action="{{ url_for('repo.delete', tag=package.tag) }}"
+      onsubmit="return confirm('Delete {{ package.tag }} and its files from the repository?')">
+  <button class="danger" {{ 'disabled' if package.protected }}>Delete package</button>
+  {% if package.protected %}<span class="muted">Protected: remove the protection first.</span>{% endif %}
+</form>
+{% endblock %}

@@ -139,3 +139,31 @@ def register_cli(app: Flask) -> None:
         keep = keep if keep is not None else settings_service.get(session, "package.keep")
         victims = packages.prune(session, keep, dry_run=not apply_)
         click.echo(f"{'Deleted' if apply_ else 'Would delete'}: {', '.join(victims) or 'nothing'}")
+
+    @app.cli.command("cleanup")
+    @click.argument("tag")
+    @click.option("--category", "categories", multiple=True, help="Category key; repeatable (default: those ticked in Settings).")
+    @click.option("--apply", "apply_", is_flag=True, help="Execute; without it only list what would go.")
+    def cleanup_command(tag, categories, apply_):
+        """Free SSD space after packaging (needs a verified package; dry run unless --apply)."""
+        from datamanager.errors import PackageError
+        from datamanager.services import cleanup
+
+        session = SessionLocal()
+        try:
+            chosen = list(categories) or [k for k, on in cleanup.defaults(session).items() if on]
+            the_plan = cleanup.plan(session, tag, chosen)
+            for key, entry in the_plan.by_category().items():
+                if key in chosen:
+                    click.echo(f"{key:18} {entry['count']:4} item(s) {entry['bytes'] / 1e9:9.1f} GB  skipped {len(entry['skipped'])}")
+                    for item in entry["skipped"]:
+                        click.echo(f"    - {item.label}: {item.skip}")
+            if not apply_:
+                click.echo("Dry run; add --apply to delete.")
+                return
+            result = cleanup.apply(session, tag, chosen)
+        except PackageError as exc:
+            raise click.ClickException(exc.message)
+        click.echo(f"Freed {result.freed / 1e9:.1f} GB: purged {result.purged}, deleted {result.deleted}, skipped {len(result.skipped)}")
+        for line in result.errors:
+            click.echo(f"  ! {line}")

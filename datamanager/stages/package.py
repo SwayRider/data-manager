@@ -30,3 +30,19 @@ class PackageStage(StageRunner):
             "tags": {l.key: l.value for l in package.labels if l.origin == "auto"},
             "warnings": [],
         })
+
+
+class PackageVerifyStage(StageRunner):
+    """Re-hashes every file of a package against its package.json (params: `tag`). A clean result unlocks the cleanup."""
+
+    key = "package-verify"
+    review_gate = False
+
+    def run(self, context: StageRunContext) -> StageResult:
+        tag = context.params["tag"]
+        context.step_cb(f"Verify {tag}")
+        problems = packages.verify_package(SessionLocal(), tag, progress=context.progress_cb)
+        if problems:
+            return StageResult("failed", report={"error": f"{len(problems)} problem(s): " + "; ".join(problems[:5]),
+                                                 "summary": {"tag": tag, "problems": problems}})
+        return StageResult("success", report={"summary": {"tag": tag, "problems": []}})

@@ -187,7 +187,7 @@ class BorderStage(StageRunner):
                     continue
                 context.step_cb(f"{region.name}: {suffix} outline")
                 target = out_dir / f"{name}.geojson"
-                facts = borders.outline(exe, assets.abs_path(source), target, work)
+                facts = borders.outline(exe, assets.input_path(source), target, work)
                 asset = assets.create(
                     session, run_id, context.config_id, "region-outline", name, target,
                     meta={"region": region.name, "source_asset_id": source.id, "fingerprint": region.fingerprint, **facts},
@@ -208,11 +208,11 @@ class BorderStage(StageRunner):
         try:
             core_outline = assets.current(session, context.config_id, "region-outline", f"{pair.a.slug}-core")
             fresh = out_dir / f"{pair.a.slug}-core.geojson"
-            outline_file = fresh if fresh.exists() else (assets.abs_path(core_outline) if core_outline else None)
+            outline_file = fresh if fresh.exists() else (assets.input_path(core_outline) if core_outline else None)
             if outline_file is None:
                 raise osmium.OsmiumError(f"no core outline of {pair.a.name}")
             context.step_cb(f"{pair.name}: border area")
-            area = osmium.extract(exe, assets.abs_path(pair.a.full), assets.abs_path(pair.poly), work / f"{pair.name}.osm.pbf")
+            area = osmium.extract(exe, assets.input_path(pair.a.full), assets.input_path(pair.poly), work / f"{pair.name}.osm.pbf")
             context.step_cb(f"{pair.name}: crossings")
             found = borders.detect(borders.roads(exe, area, work), borders.load_outline(outline_file), pair.a.name, pair.b.name)
             target = borders.write_csv(out_dir / f"{pair.name}.csv", found)

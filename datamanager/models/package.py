@@ -31,6 +31,7 @@ class Package(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     build_run_id: Mapped[int | None] = mapped_column(ForeignKey("build_run.id", ondelete="SET NULL"), nullable=True)
     package_json_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    verified_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)  # last clean `verify_package`
 
     items: Mapped[list["PackageItem"]] = relationship(
         cascade="all, delete-orphan", order_by="PackageItem.id", back_populates="package"

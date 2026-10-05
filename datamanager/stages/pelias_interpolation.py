@@ -152,7 +152,7 @@ class PeliasInterpolationStage(StageRunner):
     def _region(self, session, region: RegionPlan, context, run_id: int, node: str, work: Path, out_root: Path) -> dict:
         entry = {"name": region.name, "status": "success", "warnings": list(region.warnings), "steps": []}
         current = {k: assets.current(session, context.config_id, t, region.slug) for k, t in ASSET_TYPES.items()}
-        if all(a is not None and a.meta_json.get("fingerprint") == region.fingerprint and assets.abs_path(a).exists() for a in current.values()):
+        if all(a is not None and a.meta_json.get("fingerprint") == region.fingerprint and assets.usable(a) for a in current.values()):
             return {**entry, "result": "unchanged", "asset_ids": {k: a.id for k, a in current.items()}, "counts": current["street"].meta_json.get("counts")}
         started = time.monotonic()
         base = work / region.slug
@@ -169,17 +169,17 @@ class PeliasInterpolationStage(StageRunner):
                 return result
 
             step("polyline", "street network", lambda: interpolation.run_script(
-                node, repo, "polyline.js", [str(street_db)], logs, "polyline", tmp, interpolation.polyline_lines(assets.abs_path(region.polylines))))
+                node, repo, "polyline.js", [str(street_db)], logs, "polyline", tmp, interpolation.polyline_lines(assets.input_path(region.polylines))))
             if region.openaddresses:
                 csv_file = base / "openaddresses.csv"
                 converted = step("openaddresses-csv", "converting OpenAddresses", lambda: interpolation.openaddresses_csv(
-                    {s: downloads.abs_path(r) for s, r in region.openaddresses.items()}, csv_file, tmp))
+                    {s: downloads.input_path(r) for s, r in region.openaddresses.items()}, csv_file, tmp))
                 step("oa", "OpenAddresses addresses", lambda: interpolation.run_script(
                     node, repo, "oa.js", [str(address_db), str(street_db)], logs, "oa", tmp, interpolation.csv_lines(csv_file)))
                 csv_file.unlink(missing_ok=True)
                 entry["openaddresses"] = {"sources": len(region.openaddresses), **converted}
             step("osm", "OpenStreetMap addresses", lambda: interpolation.run_osm(
-                node, repo, assets.abs_path(region.pbf), address_db, street_db, logs, tmp, base / "leveldb"))
+                node, repo, assets.input_path(region.pbf), address_db, street_db, logs, tmp, base / "leveldb"))
             shutil.rmtree(base / "leveldb", ignore_errors=True)
             step("vertices", "street vertices", lambda: interpolation.run_script(
                 node, repo, "vertices.js", [str(address_db), str(street_db)], logs, "vertices", tmp))

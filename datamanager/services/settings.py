@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from datamanager.errors import ValidationError
+from datamanager.services.cleanup_categories import CATEGORIES
 from datamanager.models import GlobalSetting
 from datamanager.services.map_styles import PUBLIC_GLYPHS, PUBLIC_TILES_URL
 
@@ -39,6 +40,7 @@ GROUPS = {
     "tool": "Tool versions",
     "pelias": "Pelias",
     "package": "Package repository",
+    "cleanup": "Cleanup after packaging (ticked by default = delete)",
 }
 
 SETTINGS: tuple[SettingDef, ...] = (
@@ -121,6 +123,12 @@ SETTINGS: tuple[SettingDef, ...] = (
                "str", "", pattern=r"\S+", secret=True),
     SettingDef("pelias.es_heap", "pelias", "Elasticsearch heap", "JVM heap of that Elasticsearch, e.g. 4g.",
                "str", "4g", pattern=r"\d+[gGmM]"),
+)
+
+SETTINGS = SETTINGS + tuple(
+    SettingDef(f"cleanup.default.{c.key}", "cleanup", c.label, c.help + " Default of the cleanup dialog: delete or keep.",
+               "str", c.default, pattern="delete|keep")
+    for c in CATEGORIES
 )
 BY_KEY = {s.key: s for s in SETTINGS}
 

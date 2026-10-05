@@ -31,3 +31,6 @@ class DownloadRecord(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     data_timestamp: Mapped[str | None] = mapped_column(String(40), nullable=True)  # OSM data date from the PBF header (planet)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("build_run.id", ondelete="SET NULL"), nullable=True)
+    # set by the post-packaging cleanup: the file is gone, the row (hash, provenance) stays
+    purged_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    purged_package: Mapped[str | None] = mapped_column(String(40), nullable=True)

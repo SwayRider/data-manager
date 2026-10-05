@@ -222,7 +222,7 @@ class PeliasStage(StageRunner):
     def _region(self, session, plan, region: RegionPlan, context, run_id: int, docker: str, work: Path, es_base: Path, out_root: Path) -> dict:
         entry = {"name": region.name, "status": "success", "warnings": list(region.warnings), "importers": []}
         current = {k: assets.current(session, context.config_id, t, region.slug) for k, t in ASSET_TYPES.items()}
-        if all(a is not None and a.meta_json.get("fingerprint") == region.fingerprint and assets.abs_path(a).exists() for a in current.values()):
+        if all(a is not None and a.meta_json.get("fingerprint") == region.fingerprint and assets.usable(a) for a in current.values()):
             return {**entry, "result": "unchanged", "asset_ids": {k: a.id for k, a in current.items()},
                     "index": current["snapshot"].meta_json.get("index_name"), "docs": current["snapshot"].meta_json.get("docs")}
         started = time.monotonic()
@@ -233,13 +233,13 @@ class PeliasStage(StageRunner):
             pelias_es.preflight(docker, version, es_base, need_gb=20.0)
             context.step_cb(f"{region.name}: laying out the data")
             countries = [pelias_data.CountryData(
-                c.iso2, c.wof_code, assets.abs_path(c.admin) if c.patched else downloads.abs_path(c.admin), not c.patched,
-                downloads.abs_path(c.geonames), downloads.abs_path(c.postal) if c.postal else None) for c in region.countries]
-            oa_files = {s: downloads.abs_path(r) for s, r in region.openaddresses.items()}
-            overture_files = {theme: downloads.abs_path(r) for theme, r in region.overture.items()}
-            pelias_data.prepare(layout, countries, oa_files, assets.abs_path(region.pbf), assets.abs_path(region.polylines), overture_files)
+                c.iso2, c.wof_code, assets.input_path(c.admin) if c.patched else downloads.input_path(c.admin), not c.patched,
+                downloads.input_path(c.geonames), downloads.input_path(c.postal) if c.postal else None) for c in region.countries]
+            oa_files = {s: downloads.input_path(r) for s, r in region.openaddresses.items()}
+            overture_files = {theme: downloads.input_path(r) for theme, r in region.overture.items()}
+            pelias_data.prepare(layout, countries, oa_files, assets.input_path(region.pbf), assets.input_path(region.polylines), overture_files)
             try:
-                transit_feeds = pelias_data.prepare_gtfs(layout, [(n, downloads.abs_path(r)) for n, r in region.gtfs.items()])
+                transit_feeds = pelias_data.prepare_gtfs(layout, [(n, downloads.input_path(r)) for n, r in region.gtfs.items()])
             except (OSError, KeyError, zipfile.BadZipFile) as exc:
                 transit_feeds = []
                 entry["warnings"].append(f"{region.name}: GTFS feeds not imported: {exc}")

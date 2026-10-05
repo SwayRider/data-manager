@@ -178,7 +178,7 @@ class WofPatchStage(StageRunner):
                  "levels": country.levels, "localadmin_levels": country.admin_levels,
                  "official": bool(country.official_cfg)}
         current = assets.current(session, None, ASSET_TYPE, country.iso2.lower())
-        if current is not None and current.meta_json.get("fingerprint") == country.fingerprint and assets.abs_path(current).exists():
+        if current is not None and current.meta_json.get("fingerprint") == country.fingerprint and assets.usable(current):
             return {**entry, "result": "unchanged", "asset_id": current.id, "stats": current.meta_json.get("stats", {})}
         started = time.monotonic()
         try:

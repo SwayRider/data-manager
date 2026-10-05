@@ -1,7 +1,60 @@
 {% extends "base.html" %}
-{% from "_macros.html" import empty_state %}
 {% block title %}Repo{% endblock %}
 {% block content %}
 <h1>Repo</h1>
-{{ empty_state("Downloads, assets and assemblies appear here (Phase 2+).") }}
+<p class="muted">Packages are immutable, tagged copies of the approved build output (tiles, valhalla, pelias, geodata) of one configuration.</p>
+
+<h2>Repository</h2>
+<table class="resolved-table">
+  <tr><th>Folder</th><td><code>{{ repo.path }}</code>{% if not repo.exists %} <span class="muted">(not created yet)</span>{% endif %}</td></tr>
+  {% if repo.total %}
+  <tr><th>Filesystem</th><td>{{ repo.fstype or '?' }} {% if repo.mount %}<span class="muted">mounted at {{ repo.mount }}</span>{% endif %}</td></tr>
+  <tr><th>Space</th><td>{{ repo.free|filesize }} free of {{ repo.total|filesize }}</td></tr>
+  {% endif %}
+</table>
+{% for w in repo.warnings %}<p class="warn-line">{{ w }}</p>{% endfor %}
+
+<h2>New package</h2>
+<form class="add-region new-package" method="post" action="{{ url_for('repo.create') }}"
+      hx-post="{{ url_for('repo.plan_preview') }}" hx-trigger="load, change, keyup changed delay:400ms from:find textarea" hx-target="#package-plan" hx-swap="innerHTML">
+  <label>Configuration
+    <select name="config">{% for c in configs %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></label>
+  <fieldset><legend>Classes</legend>
+    {% for c in classes %}<label><input type="checkbox" name="classes" value="{{ c }}" checked> {{ c }}</label> {% endfor %}
+  </fieldset>
+  <label>Labels <textarea name="labels" rows="2" cols="30" placeholder="candidate&#10;for=q4"></textarea></label>
+  <label>Note <input name="note" maxlength="500" size="40"></label>
+  <label><input type="checkbox" name="force" value="1"> Package even when a stage is outdated, unreviewed or running</label>
+  <div id="package-plan"><p class="muted">Checking what would be packaged…</p></div>
+</form>
+
+<h2>Packages</h2>
+<form class="add-region" method="get">
+  <label>Configuration <select name="config"><option value="">all</option>
+    {% for c in configs %}<option value="{{ c.id }}" {{ 'selected' if filters.config == c.id }}>{{ c.name }}</option>{% endfor %}</select></label>
+  <label>Class <select name="class"><option value="">all</option>
+    {% for c in classes %}<option value="{{ c }}" {{ 'selected' if filters.class == c }}>{{ c }}</option>{% endfor %}</select></label>
+  <label>Label <input name="label" value="{{ filters.label }}" size="14"></label>
+  <button>Filter</button>
+</form>
+{% if rows %}
+<table class="resolved-table">
+  <tr><th>Tag</th><th>Created (UTC)</th><th>Configuration</th><th>Classes</th><th>Size</th><th>Status</th><th>Labels</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('repo.detail', tag=r.p.tag) }}">{{ r.p.tag }}</a>{% if r.p.protected %} <span class="badge">protected</span>{% endif %}</td>
+    <td>{{ r.p.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+    <td>{{ r.config }}</td>
+    <td>{{ r.classes|join(', ') }}</td>
+    <td>{{ r.p.size_bytes|filesize }}</td>
+    <td><span class="badge status-{{ 'approved' if r.p.status == 'complete' else r.p.status }}">{{ r.p.status }}</span>
+        {% if r.p.verified_at %}<span class="muted">verified</span>{% endif %}</td>
+    <td>{% for l in r.user_labels %}<code>{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}</code> {% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">Setting <code>package.keep</code> = {{ keep }}: <code>flask packages-prune</code> keeps that many unprotected packages.</p>
+{% else %}
+<p class="empty-state">No packages{% if filters.config or filters.label or filters.class %} match this filter{% endif %} yet.</p>
+{% endif %}
 {% endblock %}

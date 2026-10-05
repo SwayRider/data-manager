@@ -393,6 +393,8 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
             progress(done, total, rel)
     on_disk = {str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file()} - {"package.json", "labels.json"}
     problems += [f"{rel}: not listed in package.json" for rel in sorted(on_disk - set(listed))]
+    package.verified_at = None if problems else _utcnow()  # the cleanup only follows a clean verify
+    session.commit()
     return problems
 
 
@@ -452,3 +454,9 @@ def reindex(session: Session) -> dict:
         swept += 1
     session.commit()
     return {"added": added, "updated": updated, "partials_removed": swept}
+
+
+def settings_keep(session: Session) -> int:
+    from datamanager.services import settings as settings_service
+
+    return settings_service.get(session, "package.keep")
