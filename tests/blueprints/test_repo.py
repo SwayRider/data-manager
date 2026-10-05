@@ -114,3 +114,19 @@ def test_recent_runs_list_package_verify_and_cleanup_runs(client, package):
         runs.create_run(session, stage, None, params=params)
     html = client.get("/repo/").get_data(as_text=True)
     assert "Recent runs" in html and "verify" in html and "cleanup" in html and package.tag in html
+
+
+def test_progress_is_per_file_with_the_package_position_in_the_message(cfg, monkeypatch):
+    import datamanager.services.packages as pk
+
+    monkeypatch.setattr(pk, "CHUNK", 4)
+    calls = []
+    package = pk.create_package(SessionLocal(), cfg.id, ["valhalla"], progress=lambda d, t, m: calls.append((d, t, m)))
+    sizes = sorted(i.size_bytes for i in package.items)
+    finals = [c for c in calls if c[0] == c[1]]
+    assert sorted(c[1] for c in finals) == sizes  # the bar total is the file's own size, not the package's
+    assert all(c[0] <= c[1] for c in calls)
+    assert any("file 1/3" in c[2] for c in calls) and all("in total" in c[2] for c in calls)
+    verify_calls = []
+    pk.verify_package(SessionLocal(), package.tag, progress=lambda d, t, m: verify_calls.append((d, t, m)))
+    assert sorted(c[1] for c in verify_calls if c[0] == c[1]) == sizes and "file 3/3" in verify_calls[-1][2]

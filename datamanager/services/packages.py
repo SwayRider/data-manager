@@ -236,6 +236,24 @@ def _copy_hash(src: Path, dst: Path, on_bytes: Callable[[int], None]) -> str:
     return digest.hexdigest()
 
 
+def _human(n: float) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.1f} MB"
+
+
+def _message(name: str, file_done: int, file_size: int, index: int, count: int, done: int, total: int) -> str:
+    """Progress line: this file copied of its size, then the position in the whole package."""
+    return f"{name} · {_human(file_done)} / {_human(file_size)} · file {index}/{count} · {_human(done)} / {_human(total)} in total"
+
+
+def _sha256_progress(path: Path, on_bytes: Callable[[int], None]) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(CHUNK), b""):
+            digest.update(chunk)
+            on_bytes(len(chunk))
+    return digest.hexdigest()
+
+
 def _sha256_of(path: Path) -> str:
     return asset_service.sha256_of(path)
 
@@ -266,20 +284,26 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     session.add(package)
     session.commit()
 
-    done, last = 0, 0.0
+    done, last, index = 0, 0.0, 0
     parts: list[dict] = []
     try:
         for class_ in dict.fromkeys(i.class_ for i in the_plan.items):
             if step:
                 step(f"Copy {class_}")
             for item in (i for i in the_plan.items if i.class_ == class_):
-                def on_bytes(n: int, name=item.rel_path):
-                    nonlocal done, last
+                index += 1
+                file_done = 0
+
+                def on_bytes(n: int, item=item, index=index):
+                    nonlocal done, last, file_done
                     done += n
-                    if progress and (time.monotonic() - last >= PROGRESS_EVERY or done == total):
+                    file_done += n
+                    if progress and time.monotonic() - last >= PROGRESS_EVERY:
                         last = time.monotonic()
-                        progress(done, total, f"{name} · {done / 1e9:.1f} / {total / 1e9:.1f} GB")
+                        progress(file_done, item.size, _message(item.rel_path, file_done, item.size, index, len(the_plan.items), done, total))
                 sha = _copy_hash(item.source, partial / item.rel_path, on_bytes)
+                if progress:  # a file always ends on its full size
+                    progress(item.size, item.size, _message(item.rel_path, item.size, item.size, index, len(the_plan.items), done, total))
                 if item.expected_sha and sha != item.expected_sha:
                     raise PackageError(f"{item.rel_path}: source changed on disk (hash {sha[:12]} != recorded {item.expected_sha[:12]})")
                 parts.append({"class": class_, "region": item.region, "path": item.rel_path, "kind": "file",
@@ -403,8 +427,8 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
     problems: list[str] = []
     listed = {p["path"]: p for body in document["classes"].values() for p in body["parts"]}
     total = sum(p["size"] for p in listed.values())
-    done = 0
-    for rel, part in listed.items():
+    done, last = 0, 0.0
+    for index, (rel, part) in enumerate(listed.items(), 1):
         file = folder / rel
         if not file.exists():
             problems.append(f"{rel}: missing")
@@ -412,11 +436,19 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
         if file.stat().st_size != part["size"]:
             problems.append(f"{rel}: size {file.stat().st_size} != {part['size']}")
             continue
-        if _sha256_of(file) != part["sha256"]:
+        file_done = 0
+
+        def on_bytes(n: int, part=part, rel=rel, index=index):
+            nonlocal done, last, file_done
+            done += n
+            file_done += n
+            if progress and time.monotonic() - last >= PROGRESS_EVERY:
+                last = time.monotonic()
+                progress(file_done, part["size"], _message(rel, file_done, part["size"], index, len(listed), done, total))
+        if _sha256_progress(file, on_bytes) != part["sha256"]:
             problems.append(f"{rel}: hash mismatch")
-        done += part["size"]
         if progress:
-            progress(done, total, f"{rel} · {done / 1e9:.1f} / {total / 1e9:.1f} GB")
+            progress(part["size"], part["size"], _message(rel, part["size"], part["size"], index, len(listed), done, total))
     on_disk = {str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file()} - {"package.json", "labels.json"}
     problems += [f"{rel}: not listed in package.json" for rel in sorted(on_disk - set(listed))]
     package.verified_at = None if problems else _utcnow()  # the cleanup only follows a clean verify
