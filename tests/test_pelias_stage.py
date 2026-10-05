@@ -411,3 +411,14 @@ def test_an_optional_importer_that_adds_nothing_is_a_warning(cfg, env):
     entry = run.report_json["pelias"][0]
     assert result["status"] == "awaiting_review" and entry["result"] == "built"
     assert any("transit added no documents" in w for w in entry["warnings"]) and any("csv-importer added no documents" in w for w in entry["warnings"])
+
+
+def test_production_config_points_at_the_interpolation_service_import_config_does_not(tmp_path):
+    from datamanager.services import pelias_data
+
+    layout = pelias_data.Layout(tmp_path, "benelux")
+    args = dict(index="pelias_benelux-1", es_host="elasticsearch", es_port=9200, wof_codes=["BE"], openaddresses=[])
+    prod = pelias_data.render_config(layout, prod=True, **args)
+    load = pelias_data.render_config(layout, prod=False, **args)
+    assert prod["interpolation"]["client"] == {"adapter": "http", "host": "http://pelias-benelux-interpolation:4300"}
+    assert load["interpolation"]["client"] == {"adapter": "null"}
