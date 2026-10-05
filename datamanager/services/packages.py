@@ -240,9 +240,10 @@ def _human(n: float) -> str:
     return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.1f} MB"
 
 
-def _message(name: str, file_done: int, file_size: int, index: int, count: int, done: int, total: int) -> str:
-    """Progress line: this file copied of its size, then the position in the whole package."""
-    return f"{name} · {_human(file_done)} / {_human(file_size)} · file {index}/{count} · {_human(done)} / {_human(total)} in total"
+def _message(name: str, file_done: int, file_size: int, index: int, count: int, step_done: int, step_total: int) -> str:
+    """Progress line: the current file and how much of it is done; the bar itself covers all files of the step."""
+    return (f"{name} · {_human(file_done)} / {_human(file_size)} · file {index}/{count} · "
+            f"step {_human(step_done)} / {_human(step_total)}")
 
 
 def _sha256_progress(path: Path, on_bytes: Callable[[int], None]) -> str:
@@ -284,26 +285,27 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     session.add(package)
     session.commit()
 
-    done, last, index = 0, 0.0, 0
+    last = 0.0
     parts: list[dict] = []
     try:
         for class_ in dict.fromkeys(i.class_ for i in the_plan.items):
             if step:
                 step(f"Copy {class_}")
-            for item in (i for i in the_plan.items if i.class_ == class_):
-                index += 1
+            class_items = [i for i in the_plan.items if i.class_ == class_]
+            step_total, step_done = sum(i.size for i in class_items), 0
+            for index, item in enumerate(class_items, 1):
                 file_done = 0
 
                 def on_bytes(n: int, item=item, index=index):
-                    nonlocal done, last, file_done
-                    done += n
+                    nonlocal step_done, last, file_done
+                    step_done += n
                     file_done += n
                     if progress and time.monotonic() - last >= PROGRESS_EVERY:
                         last = time.monotonic()
-                        progress(file_done, item.size, _message(item.rel_path, file_done, item.size, index, len(the_plan.items), done, total))
+                        progress(step_done, step_total, _message(item.rel_path, file_done, item.size, index, len(class_items), step_done, step_total))
                 sha = _copy_hash(item.source, partial / item.rel_path, on_bytes)
                 if progress:  # a file always ends on its full size
-                    progress(item.size, item.size, _message(item.rel_path, item.size, item.size, index, len(the_plan.items), done, total))
+                    progress(step_done, step_total, _message(item.rel_path, item.size, item.size, index, len(class_items), step_done, step_total))
                 if item.expected_sha and sha != item.expected_sha:
                     raise PackageError(f"{item.rel_path}: source changed on disk (hash {sha[:12]} != recorded {item.expected_sha[:12]})")
                 parts.append({"class": class_, "region": item.region, "path": item.rel_path, "kind": "file",
@@ -444,11 +446,11 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
             file_done += n
             if progress and time.monotonic() - last >= PROGRESS_EVERY:
                 last = time.monotonic()
-                progress(file_done, part["size"], _message(rel, file_done, part["size"], index, len(listed), done, total))
+                progress(done, total, _message(rel, file_done, part["size"], index, len(listed), done, total))
         if _sha256_progress(file, on_bytes) != part["sha256"]:
             problems.append(f"{rel}: hash mismatch")
         if progress:
-            progress(part["size"], part["size"], _message(rel, part["size"], part["size"], index, len(listed), done, total))
+            progress(done, total, _message(rel, part["size"], part["size"], index, len(listed), done, total))
     on_disk = {str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file()} - {"package.json", "labels.json"}
     problems += [f"{rel}: not listed in package.json" for rel in sorted(on_disk - set(listed))]
     package.verified_at = None if problems else _utcnow()  # the cleanup only follows a clean verify

@@ -116,17 +116,32 @@ def test_recent_runs_list_package_verify_and_cleanup_runs(client, package):
     assert "Recent runs" in html and "verify" in html and "cleanup" in html and package.tag in html
 
 
-def test_progress_is_per_file_with_the_package_position_in_the_message(cfg, monkeypatch):
+def test_progress_covers_all_files_of_a_copy_step(cfg, monkeypatch):
     import datamanager.services.packages as pk
 
     monkeypatch.setattr(pk, "CHUNK", 4)
+    monkeypatch.setattr(pk, "PROGRESS_EVERY", 0)  # every chunk, to see the whole sequence
     calls = []
     package = pk.create_package(SessionLocal(), cfg.id, ["valhalla"], progress=lambda d, t, m: calls.append((d, t, m)))
-    sizes = sorted(i.size_bytes for i in package.items)
-    finals = [c for c in calls if c[0] == c[1]]
-    assert sorted(c[1] for c in finals) == sizes  # the bar total is the file's own size, not the package's
-    assert all(c[0] <= c[1] for c in calls)
-    assert any("file 1/3" in c[2] for c in calls) and all("in total" in c[2] for c in calls)
+    total = sum(i.size_bytes for i in package.items)
+    assert {c[1] for c in calls} == {total}  # one step (valhalla): the bar total is all its files together
+    done = [c[0] for c in calls]
+    assert done == sorted(done) and done[-1] == total  # monotonic over the files, ends at the step total
+    assert any("file 1/3" in c[2] for c in calls) and any("file 3/3" in c[2] for c in calls) and all("step " in c[2] for c in calls)
     verify_calls = []
     pk.verify_package(SessionLocal(), package.tag, progress=lambda d, t, m: verify_calls.append((d, t, m)))
-    assert sorted(c[1] for c in verify_calls if c[0] == c[1]) == sizes and "file 3/3" in verify_calls[-1][2]
+    assert {c[1] for c in verify_calls} == {total} and verify_calls[-1][0] == total and "file 3/3" in verify_calls[-1][2]
+
+
+def test_each_class_is_its_own_step_with_its_own_total(cfg):
+    import datamanager.services.packages as pk
+
+    steps, calls = [], []
+    _asset(SessionLocal(), cfg.id, "region-outline", "benelux-core", "library/assets/border/8/benelux-core.geojson", b"core")
+    _asset(SessionLocal(), cfg.id, "region-outline", "benelux-extended", "library/assets/border/8/benelux-extended.geojson", b"extended")
+    SessionLocal().commit()
+    package = pk.create_package(SessionLocal(), cfg.id, ["valhalla", "geodata"], step=steps.append,
+                                progress=lambda d, t, m: calls.append((len(steps), d, t)))
+    assert steps == ["Copy valhalla", "Copy geodata"]
+    by_class = {c: sum(i.size_bytes for i in package.items if i.class_ == c) for c in ("valhalla", "geodata")}
+    assert {t for n, d, t in calls if n == 1} == {by_class["valhalla"]} and {t for n, d, t in calls if n == 2} == {by_class["geodata"]}
