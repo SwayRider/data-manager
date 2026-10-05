@@ -127,11 +127,12 @@ def test_progress_covers_all_files_of_a_copy_step(cfg, monkeypatch):
     assert {c[1] for c in calls} == {total}  # one step (valhalla): the bar total is all its files together
     done = [c[0] for c in calls]
     assert done == sorted(done) and done[-1] == total  # monotonic over the files, ends at the step total
-    assert any("file 1/3" in c[2] for c in calls) and any("file 3/3" in c[2] for c in calls)
-    assert calls[-1][2].startswith(f"{pk._human(total)} / {pk._human(total)} · file 3/3")  # the numbers are the step's, not the file's
+    assert any("· 1/3 ·" in c[2] for c in calls) and any("· 3/3 ·" in c[2] for c in calls)
+    human = pk._human(total)
+    assert calls[-1][2].endswith(f"· 3/3 · {human} / {human} · {human} / {human}")  # name · file/files · step · overall
     verify_calls = []
     pk.verify_package(SessionLocal(), package.tag, progress=lambda d, t, m: verify_calls.append((d, t, m)))
-    assert {c[1] for c in verify_calls} == {total} and verify_calls[-1][0] == total and "file 3/3" in verify_calls[-1][2]
+    assert {c[1] for c in verify_calls} == {total} and verify_calls[-1][0] == total and "· 3/3 ·" in verify_calls[-1][2]
 
 
 def test_each_class_is_its_own_step_with_its_own_total(cfg):
@@ -146,3 +147,17 @@ def test_each_class_is_its_own_step_with_its_own_total(cfg):
     assert steps == ["Copy valhalla", "Copy geodata"]
     by_class = {c: sum(i.size_bytes for i in package.items if i.class_ == c) for c in ("valhalla", "geodata")}
     assert {t for n, d, t in calls if n == 1} == {by_class["valhalla"]} and {t for n, d, t in calls if n == 2} == {by_class["geodata"]}
+
+
+def test_overall_total_spans_all_steps(cfg):
+    import datamanager.services.packages as pk
+
+    messages = []
+    _asset(SessionLocal(), cfg.id, "region-outline", "benelux-core", "library/assets/border/8/benelux-core.geojson", b"core")
+    _asset(SessionLocal(), cfg.id, "region-outline", "benelux-extended", "library/assets/border/8/benelux-extended.geojson", b"extended")
+    SessionLocal().commit()
+    package = pk.create_package(SessionLocal(), cfg.id, ["valhalla", "geodata"], progress=lambda d, t, m: messages.append(m))
+    total = sum(i.size_bytes for i in package.items)
+    first, last = messages[0].split(" · "), messages[-1].split(" · ")
+    assert first[-1].endswith(f"/ {pk._human(total)}") and last[-1] == f"{pk._human(total)} / {pk._human(total)}"
+    assert last[0].startswith("geodata/") and last[1] == "2/2"  # the last step has its own file count and total
