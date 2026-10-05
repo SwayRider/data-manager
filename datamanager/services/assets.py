@@ -2,12 +2,14 @@
 
 An asset is `produced` when its run ends, `approved`/`rejected` with the run's review. Later stages
 use `current(...)`: the newest approved asset for a (configuration, type, name)."""
+import datetime
 import hashlib
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from datamanager.config import config
+from datamanager.errors import ValidationError
 from datamanager.models import Asset, BuildRun
 
 
@@ -81,12 +83,56 @@ def for_run(session: Session, run_id: int) -> list[Asset]:
     return session.query(Asset).filter(Asset.produced_by_run_id == run_id).order_by(Asset.id).all()
 
 
-def _remove_files(asset: Asset) -> None:
+def _files(asset: Asset) -> list[Path]:
     files = [abs_path(asset)]
     if asset.meta_json.get("geojson"):
         files.append(Path(config.DATA_ROOT) / asset.meta_json["geojson"])
-    for file in files:
+    return files
+
+
+def _remove_files(asset: Asset) -> None:
+    for file in _files(asset):
         file.unlink(missing_ok=True)
+
+
+def is_purged(asset: Asset) -> bool:
+    return bool((asset.meta_json or {}).get("purged"))
+
+
+def purge(session: Session, asset: Asset, package_tag: str) -> int:
+    """Cleanup after packaging: remove the files, keep the row (hash, provenance, fingerprint) so stages still
+    count as up to date. Returns the bytes that were on disk."""
+    freed = sum(f.stat().st_size for f in _files(asset) if f.exists())
+    extra = {}
+    geojson = Path(config.DATA_ROOT) / asset.meta_json["geojson"] if asset.meta_json.get("geojson") else None
+    if geojson is not None and geojson.exists():  # polygons: later stages only need the bounding box for their fingerprint
+        try:
+            import json
+
+            from shapely.geometry import shape
+
+            extra["bbox"] = list(shape(json.loads(geojson.read_text())).bounds)
+        except (OSError, ValueError, KeyError):
+            pass
+    _remove_files(asset)
+    asset.meta_json = {**asset.meta_json, **extra, "purged": {"package": package_tag, "at": datetime.datetime.now(datetime.UTC).isoformat()}}
+    session.flush()
+    return freed
+
+
+def usable(asset: Asset) -> bool:
+    """Present on disk, or knowingly purged (skip checks: a purged result is not a reason to rebuild)."""
+    return is_purged(asset) or abs_path(asset).exists()
+
+
+def input_path(asset: Asset) -> Path:
+    """The file a stage reads; a clear error instead of a failure halfway when cleanup removed it."""
+    path = abs_path(asset)
+    if path.exists():
+        return path
+    purged = (asset.meta_json or {}).get("purged")
+    reason = f"was purged by the cleanup (packaged in {purged['package']})" if purged else "is missing on disk"
+    raise ValidationError(f"{asset.asset_type} '{asset.name}' {reason}: run the stage that produces it again.")
 
 
 KEEP_ASSETS = {"country-pbf": 2}  # asset types that only keep their newest N approved versions per name

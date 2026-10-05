@@ -1,0 +1,10 @@
+<dialog class="modal wide" id="modal-package-verify">
+  <form class="stacked-form" method="post" action="{{ url_for('build.start', stage_key='package-verify', config=config.id) }}">
+    <h3>Verify a package</h3>
+    <label class="field"><span>Package</span>
+      <select name="tag">{% for p in package_ui.packages %}<option value="{{ p.tag }}">{{ p.tag }} · {{ p.size_bytes|filesize }} · {{ 'verified ' ~ p.verified_at.strftime('%Y-%m-%d') if p.verified_at else 'unverified' }}</option>{% endfor %}</select></label>
+    <p class="muted">Reads every file and compares its SHA-256 with package.json. Takes as long as reading the package from disk.</p>
+    <div class="form-actions"><button class="primary" {{ 'disabled' if not package_ui.packages }}>Start verify</button>
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button></div>
+  </form>
+</dialog>

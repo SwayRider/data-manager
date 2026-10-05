@@ -1,0 +1,9 @@
+{% set summary = run.report_json.get('summary', {}) %}
+<p>Cleanup after <a href="{{ url_for('repo.detail', tag=summary.tag) }}"><strong>{{ summary.tag }}</strong></a>:
+  freed <strong>{{ summary.freed|filesize }}</strong>, {{ summary.purged }} purged (file removed, record kept), {{ summary.deleted }} deleted.</p>
+<table class="resolved-table">
+  <tr><th>Category</th><th>Freed</th><th>Purged</th><th>Deleted</th><th>Skipped</th></tr>
+  {% for c in summary.categories %}<tr><td>{{ c.label }}</td><td>{{ c.freed|filesize }}</td><td>{{ c.purged }}</td><td>{{ c.deleted }}</td><td>{{ c.skipped }}</td></tr>{% endfor %}
+</table>
+{% for line in run.report_json.get('skipped', []) %}<p class="warn-line">Skipped {{ line }}</p>{% endfor %}
+{% for line in run.report_json.get('errors', []) %}<p class="error">{{ line }}</p>{% endfor %}

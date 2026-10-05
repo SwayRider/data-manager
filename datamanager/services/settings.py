@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 
 from datamanager.errors import ValidationError
+from datamanager.services.cleanup_categories import CATEGORIES
 from datamanager.models import GlobalSetting
 from datamanager.services.map_styles import PUBLIC_GLYPHS, PUBLIC_TILES_URL
 
@@ -38,6 +39,8 @@ GROUPS = {
     "run": "Resources",
     "tool": "Tool versions",
     "pelias": "Pelias",
+    "package": "Package repository",
+    "cleanup": "Cleanup after packaging (ticked by default = delete)",
 }
 
 SETTINGS: tuple[SettingDef, ...] = (
@@ -63,6 +66,8 @@ SETTINGS: tuple[SettingDef, ...] = (
                "url", "https://build.protomaps.com/"),
     SettingDef("download.tiles_keep", "download", "Tile builds kept", "How many full Protomaps planet builds are kept on disk.",
                "int", 1, min=1, max=3),
+    SettingDef("package.keep", "package", "Packages kept", "How many unprotected packages `packages-prune` keeps (newest first).",
+               "int", 3, min=1, max=50),
     SettingDef("download.connections", "download", "Parallel connections", "Parallel Range segments used for large downloads.",
                "int", 4, min=1, max=8),
     SettingDef("download.country_polys", "download", "Country polygons", "Base URL of the per-country .poly files (a few kB each) used to cut countries from the planet.",
@@ -118,6 +123,12 @@ SETTINGS: tuple[SettingDef, ...] = (
                "str", "", pattern=r"\S+", secret=True),
     SettingDef("pelias.es_heap", "pelias", "Elasticsearch heap", "JVM heap of that Elasticsearch, e.g. 4g.",
                "str", "4g", pattern=r"\d+[gGmM]"),
+)
+
+SETTINGS = SETTINGS + tuple(
+    SettingDef(f"cleanup.default.{c.key}", "cleanup", c.label, c.help + " Default of the cleanup dialog: delete or keep.",
+               "str", c.default, pattern="delete|keep")
+    for c in CATEGORIES
 )
 BY_KEY = {s.key: s for s in SETTINGS}
 

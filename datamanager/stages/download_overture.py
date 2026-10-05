@@ -50,7 +50,8 @@ def _bbox(asset) -> tuple | None:
     try:
         return tuple(shape(json.loads(assets.abs_path(asset).with_suffix(".geojson").read_text())).bounds)
     except (OSError, ValueError, KeyError):
-        return None
+        bbox = (asset.meta_json or {}).get("bbox")  # recorded when the cleanup removed the file
+        return tuple(bbox) if bbox else None
 
 
 def plan_inputs(session, config_id: int, resolved: dict, regions: list[str] | None = None) -> OverturePlan:

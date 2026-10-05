@@ -1,0 +1,15 @@
+{% if error %}<p class="error">{{ error }}</p>
+{% elif plan %}
+<table class="resolved-table">
+  <tr><th>Class</th><th>Files</th><th>Size</th></tr>
+  {% for cls in ['tiles', 'valhalla', 'pelias', 'geodata'] %}
+  {% set files = plan.items|selectattr('class_', 'equalto', cls)|list %}
+  {% if files %}<tr><td>{{ cls }}</td><td>{{ files|length }}</td><td>{{ files|sum(attribute='size')|filesize }}</td></tr>{% endif %}
+  {% endfor %}
+  <tr><th>Total</th><th>{{ plan.items|length }}</th><th>{{ plan.total_bytes|filesize }}</th></tr>
+</table>
+{% if free is not none %}<p class="muted">{{ free|filesize }} free in the repository; copying needs {{ (plan.total_bytes * 1.05)|filesize }}.</p>{% endif %}
+{% for p in plan.problems %}<p class="warn-line">{{ p }}</p>{% endfor %}
+<div class="form-actions"><button class="primary" {% if plan.problems or not plan.items %}disabled{% endif %}>Start package</button>
+  <span class="muted">Runs in the worker; copying and hashing takes a while for hundreds of GB.</span></div>
+{% endif %}

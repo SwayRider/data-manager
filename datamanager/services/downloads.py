@@ -65,6 +65,42 @@ def abs_path(record: DownloadRecord) -> Path:
     return Path(config.DATA_ROOT) / record.local_path  # an absolute local_path (registered file) wins
 
 
+def is_purged(record: DownloadRecord) -> bool:
+    return record.purged_at is not None
+
+
+def input_path(record: DownloadRecord) -> Path:
+    """The file a stage reads; a clear error when the cleanup removed it."""
+    path = abs_path(record)
+    if path.exists():
+        return path
+    reason = f"was purged by the cleanup (packaged in {record.purged_package})" if is_purged(record) else "is missing on disk"
+    raise ValidationError(f"{record.source_key} {record.version_label} {reason}: download it again.")
+
+
+def purge(session: Session, record: DownloadRecord, package_tag: str, together: frozenset[int] = frozenset()) -> int:
+    """Cleanup after packaging: remove the file (unless a live record outside `together` still shares it), keep the row.
+    Returns freed bytes."""
+    shared = session.query(DownloadRecord).filter(
+        DownloadRecord.local_path == record.local_path, DownloadRecord.id != record.id, DownloadRecord.purged_at.is_(None),
+        DownloadRecord.id.notin_(together),  # records purged in the same cleanup do not keep the file alive
+    ).count()
+    path = abs_path(record)
+    freed = 0
+    if not shared and path.exists() and is_managed(path):
+        freed = path.stat().st_size
+        path.unlink()
+        try:
+            path.parent.rmdir()
+        except OSError:
+            pass
+    if not shared:
+        record.purged_at = _now()
+        record.purged_package = package_tag
+        session.flush()
+    return freed
+
+
 def is_managed(path: Path) -> bool:
     """True for files under DATA_ROOT/downloads, i.e. ones we fetched and may delete."""
     try:

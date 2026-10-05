@@ -1,0 +1,19 @@
+{% set summary = run.report_json.get('summary', {}) %}
+{% if run.stage_key == 'package' %}
+<p>Package <a href="{{ url_for('repo.detail', tag=summary.tag) }}"><strong>{{ summary.tag }}</strong></a>:
+  {{ summary.files }} file(s), {{ summary.size_bytes|filesize }} in <code>{{ summary.path }}</code>{% if summary.verified %}, verified{% endif %}.
+  <a href="{{ url_for('repo.detail', tag=summary.tag) }}">Open it</a> to verify it and to clean up afterwards.</p>
+<table class="resolved-table">
+  <tr><th>Class</th><th>Files</th><th>Size</th></tr>
+  {% for cls, e in summary.classes.items() %}<tr><td>{{ cls }}</td><td>{{ e.files }}</td><td>{{ e.bytes|filesize }}</td></tr>{% endfor %}
+</table>
+<h3>Tags</h3>
+<div class="tag-chips">{% for k, v in run.report_json.get('tags', {}).items() %}<code class="tag-chip">{{ k }}={{ v }}</code>{% endfor %}</div>
+{% else %}
+{% if summary.problems %}
+<p class="error">{{ summary.problems|length }} problem(s) in <a href="{{ url_for('repo.detail', tag=summary.tag) }}">{{ summary.tag }}</a>:</p>
+<ul>{% for p in summary.problems %}<li>{{ p }}</li>{% endfor %}</ul>
+{% else %}
+<p>All files of <a href="{{ url_for('repo.detail', tag=summary.tag) }}"><strong>{{ summary.tag }}</strong></a> match their SHA-256 in package.json. The cleanup is now available on the package page.</p>
+{% endif %}
+{% endif %}

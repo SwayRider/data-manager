@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -23,8 +24,15 @@ from datamanager.services import downloads, regions as region_service, resolve
 
 CLASSES = ("tiles", "valhalla", "pelias", "geodata")
 SCHEMA = 1
+CLASS_HELP = {
+    "tiles": "Protomaps planet PMTiles and the map styles",
+    "valhalla": "Routing tiles, admin and timezone databases per region",
+    "pelias": "Elasticsearch snapshot, pelias.json, WOF and interpolation databases per region",
+    "geodata": "Region outlines and border crossings",
+}
 CHUNK = 8 * 1024 * 1024
 FREE_SPACE_FACTOR = 1.05
+PROGRESS_EVERY = 1.0  # seconds between progress updates (every one is a DB commit)
 
 # class -> [(asset type, destination relative to the class folder; `{region}` is filled in)] for per-region assets
 REGION_PARTS = {
@@ -41,6 +49,10 @@ REGION_PARTS = {
         ("pelias-interpolation-address-db", "{region}/interpolation/address.db"),
     ],
 }
+# class -> the stages whose output it packages; a package is refused while one of them is not settled
+CLASS_STAGES = {"tiles": ("download-tiles", "styles"), "valhalla": ("valhalla",),
+                "pelias": ("pelias", "pelias-interpolation"), "geodata": ("border",)}
+UNSETTLED = {"outdated", "review", "running"}
 ProgressCb = Callable[[int, int, str], None]
 
 
@@ -96,7 +108,7 @@ def _asset_item(session: Session, config_id: int, class_: str, region: str | Non
                     asset_id=asset.id, meta={"asset_type": asset_type, "name": name, "run_id": asset.produced_by_run_id})
 
 
-def plan(session: Session, config_id: int, classes: list[str] | None = None) -> Plan:
+def plan(session: Session, config_id: int, classes: list[str] | None = None, check_status: bool = False) -> Plan:
     """What a package of this configuration would contain, and what blocks it. Nothing is copied."""
     classes = list(classes or CLASSES)
     unknown = [c for c in classes if c not in CLASSES]
@@ -153,10 +165,53 @@ def plan(session: Session, config_id: int, classes: list[str] | None = None) -> 
                 item = _asset_item(session, config_id, class_, None, "style", name, f"styles/{name}.json", problems)
                 if item:
                     items.append(item)
+    if check_status:
+        problems += _unsettled(session, config_id, resolved, classes)
     return Plan(items, problems, regions, {r.name.lower(): r.hash for r in resolved.regions})
 
 
+def _unsettled(session: Session, config_id: int, resolved, classes: list[str]) -> list[str]:
+    """Stages behind the chosen classes that are outdated, waiting for review or running: packaging them would
+    freeze a stale or unapproved state. `force` skips this check."""
+    from datamanager.stages import status as stage_status  # local: the stages import the services
+
+    states = stage_status.compute(session, config_id, resolve.to_dict(resolved), {})
+    found = []
+    for class_ in classes:
+        for key in CLASS_STAGES.get(class_, ()):
+            state = states.get(key)
+            if state is not None and state.state in UNSETTLED:
+                found.append(f"{class_}: stage {key} is {state.state} ({state.detail})")
+    return found
+
+
+def tool_versions(session: Session) -> dict:
+    from datamanager.services import settings as settings_service
+    from datamanager.stages.pelias import PLAN_VERSION as PELIAS_PLAN_VERSION
+
+    return {"valhalla": settings_service.get(session, "tool.valhalla_tag"),
+            "elasticsearch": settings_service.get(session, "tool.elasticsearch_version"),
+            "pelias_ref": settings_service.get(session, "tool.pelias_ref"),
+            "pelias_plan_version": PELIAS_PLAN_VERSION}
+
+
 # ---- creating ---------------------------------------------------------------------------------------------------
+
+# Tags the package writes itself: users can add labels but never set or overwrite these keys.
+RESERVED_KEYS = {"date", "config", "regions", "classes", "created_by", "source_runs", "tiles_build"}
+RESERVED_PREFIXES = ("tool.", "resolved_hash.")
+
+
+def default_tags(config_name: str, moment: datetime.datetime | None = None) -> dict:
+    """The tags every package carries and that the form shows up front: date (UTC) and configuration."""
+    return {"date": f"{moment or _utcnow():%Y-%m-%d}", "config": config_name}
+
+
+def check_labels(labels: dict[str, str]) -> None:
+    bad = sorted(k for k in labels if k in RESERVED_KEYS or k.startswith(RESERVED_PREFIXES))
+    if bad:
+        raise PackageError(f"Reserved tag(s) cannot be set as labels: {', '.join(bad)}", reserved=bad)
+
 
 def _next_tag(session: Session) -> str:
     prefix = f"r-{_utcnow():%Y%m%d}-"
@@ -181,15 +236,35 @@ def _copy_hash(src: Path, dst: Path, on_bytes: Callable[[int], None]) -> str:
     return digest.hexdigest()
 
 
+def _human(n: float) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.1f} MB"
+
+
+def _message(name: str, index: int, count: int, step_done: int, step_total: int, done: int, total: int) -> str:
+    """Progress line: file name, file number of the step, GB of the step, GB of the whole package."""
+    return f"{name} · {index}/{count} · {_human(step_done)} / {_human(step_total)} · {_human(done)} / {_human(total)}"
+
+
+def _sha256_progress(path: Path, on_bytes: Callable[[int], None]) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(CHUNK), b""):
+            digest.update(chunk)
+            on_bytes(len(chunk))
+    return digest.hexdigest()
+
+
 def _sha256_of(path: Path) -> str:
     return asset_service.sha256_of(path)
 
 
 def create_package(session: Session, config_id: int, classes: list[str] | None = None, *, created_by: str = "operator",
                    labels: dict[str, str] | None = None, note: str = "", run_id: int | None = None,
-                   progress: ProgressCb | None = None, step: Callable[[str], None] | None = None) -> Package:
+                   progress: ProgressCb | None = None, step: Callable[[str], None] | None = None,
+                   check_status: bool = False) -> Package:
     """Copy the approved inputs into `PACKAGE_ROOT/<tag>/`, hash them, write `package.json` last."""
-    the_plan = plan(session, config_id, classes)
+    check_labels(labels or {})
+    the_plan = plan(session, config_id, classes, check_status=check_status)
     if the_plan.problems:
         raise PackageError("Cannot package: " + "; ".join(the_plan.problems), problems=the_plan.problems)
     if not the_plan.items:
@@ -209,19 +284,25 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     session.add(package)
     session.commit()
 
-    done = 0
+    last, done = 0.0, 0
     parts: list[dict] = []
     try:
         for class_ in dict.fromkeys(i.class_ for i in the_plan.items):
             if step:
                 step(f"Copy {class_}")
-            for item in (i for i in the_plan.items if i.class_ == class_):
-                def on_bytes(n: int, name=item.rel_path):
-                    nonlocal done
+            class_items = [i for i in the_plan.items if i.class_ == class_]
+            step_total, step_done = sum(i.size for i in class_items), 0
+            for index, item in enumerate(class_items, 1):
+                def on_bytes(n: int, item=item, index=index):
+                    nonlocal step_done, done, last
+                    step_done += n
                     done += n
-                    if progress:
-                        progress(done, total, name)
+                    if progress and time.monotonic() - last >= PROGRESS_EVERY:
+                        last = time.monotonic()
+                        progress(step_done, step_total, _message(item.rel_path, index, len(class_items), step_done, step_total, done, total))
                 sha = _copy_hash(item.source, partial / item.rel_path, on_bytes)
+                if progress:  # a file always ends on its full size
+                    progress(step_done, step_total, _message(item.rel_path, index, len(class_items), step_done, step_total, done, total))
                 if item.expected_sha and sha != item.expected_sha:
                     raise PackageError(f"{item.rel_path}: source changed on disk (hash {sha[:12]} != recorded {item.expected_sha[:12]})")
                 parts.append({"class": class_, "region": item.region, "path": item.rel_path, "kind": "file",
@@ -229,12 +310,13 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
                               "source": {k: v for k, v in (("asset_id", item.asset_id), ("download_id", item.download_id)) if v},
                               "meta": item.meta})
         created_at = _utcnow()
-        tags = _auto_tags(config_row, the_plan, parts, created_by, created_at)
+        versions = tool_versions(session)
+        tags = _auto_tags(config_row, the_plan, parts, created_by, created_at, versions)
         document = {
             "schema": SCHEMA, "tag": tag, "created_at": created_at.isoformat() + "Z", "created_by": created_by,
             "config": {"name": config_row.name if config_row else None, "id": config_id,
                        "resolved_hashes": the_plan.resolved_hashes},
-            "regions": the_plan.regions, "tags": tags,
+            "regions": the_plan.regions, "tool_versions": versions, "tags": tags,
             "classes": {c: {"parts": [p for p in parts if p["class"] == c]} for c in dict.fromkeys(p["class"] for p in parts)},
         }
         body = json.dumps(document, indent=2, sort_keys=True).encode()
@@ -258,14 +340,16 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     return package
 
 
-def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, created_at: datetime.datetime) -> dict:
+def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, created_at: datetime.datetime,
+               versions: dict) -> dict:
     tags = {
-        "config": config_row.name if config_row else "",
+        **default_tags(config_row.name if config_row else "", created_at),
         "regions": ",".join(the_plan.regions),
         "classes": ",".join(dict.fromkeys(p["class"] for p in parts)),
-        "created": f"{created_at:%Y-%m-%d}",
         "created_by": created_by,
     }
+    for name, value in versions.items():
+        tags[f"tool.{name}"] = str(value)
     for region, digest in the_plan.resolved_hashes.items():
         tags[f"resolved_hash.{region}"] = digest[:16]
     runs = sorted({p["meta"]["run_id"] for p in parts if p["meta"].get("run_id")})
@@ -317,6 +401,7 @@ def edit_labels(session: Session, tag: str, labels: dict[str, str] | None = None
                 protected: bool | None = None) -> Package:
     package = get(session, tag)
     if labels is not None:
+        check_labels(labels)
         session.query(PackageLabel).filter_by(package_id=package.id, origin="user").delete(synchronize_session="fetch")
         for key, value in labels.items():
             session.add(PackageLabel(package_id=package.id, key=key, value=value, origin="user"))
@@ -341,8 +426,8 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
     problems: list[str] = []
     listed = {p["path"]: p for body in document["classes"].values() for p in body["parts"]}
     total = sum(p["size"] for p in listed.values())
-    done = 0
-    for rel, part in listed.items():
+    done, last = 0, 0.0
+    for index, (rel, part) in enumerate(listed.items(), 1):
         file = folder / rel
         if not file.exists():
             problems.append(f"{rel}: missing")
@@ -350,13 +435,21 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
         if file.stat().st_size != part["size"]:
             problems.append(f"{rel}: size {file.stat().st_size} != {part['size']}")
             continue
-        if _sha256_of(file) != part["sha256"]:
+
+        def on_bytes(n: int, rel=rel, index=index):
+            nonlocal done, last
+            done += n
+            if progress and time.monotonic() - last >= PROGRESS_EVERY:
+                last = time.monotonic()
+                progress(done, total, _message(rel, index, len(listed), done, total, done, total))
+        if _sha256_progress(file, on_bytes) != part["sha256"]:
             problems.append(f"{rel}: hash mismatch")
-        done += part["size"]
         if progress:
-            progress(done, total, rel)
+            progress(done, total, _message(rel, index, len(listed), done, total, done, total))
     on_disk = {str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file()} - {"package.json", "labels.json"}
     problems += [f"{rel}: not listed in package.json" for rel in sorted(on_disk - set(listed))]
+    package.verified_at = None if problems else _utcnow()  # the cleanup only follows a clean verify
+    session.commit()
     return problems
 
 
@@ -416,3 +509,43 @@ def reindex(session: Session) -> dict:
         swept += 1
     session.commit()
     return {"added": added, "updated": updated, "partials_removed": swept}
+
+
+def settings_keep(session: Session) -> int:
+    from datamanager.services import settings as settings_service
+
+    return settings_service.get(session, "package.keep")
+
+
+def parse_labels(text: str) -> dict[str, str]:
+    """`key=value` or bare labels, one per line or comma separated."""
+    labels = {}
+    for part in text.replace(",", "\n").splitlines():
+        part = part.strip()
+        if part:
+            key, _, value = part.partition("=")
+            labels[key.strip()[:100]] = value.strip()[:300]
+    return labels
+
+
+def newest(session: Session, config_id: int, verified: bool = False) -> Package | None:
+    query = session.query(Package).filter_by(config_profile_id=config_id, status="complete")
+    if verified:
+        query = query.filter(Package.verified_at.isnot(None))
+    return query.order_by(Package.id.desc()).first()
+
+
+def stale_parts(session: Session, package: Package) -> list[str]:
+    """What the package holds that is no longer the current approved result (for the Build status)."""
+    stale = []
+    for item in package.items:
+        if item.asset_id:
+            kind, name = item.meta_json.get("asset_type"), item.meta_json.get("name")
+            current = asset_service.current(session, package.config_profile_id, kind, name) if kind and name else None
+            if current is not None and current.id != item.asset_id:
+                stale.append(f"{kind} {name}")
+        elif item.download_id:
+            record = downloads.resolve_version(session, item.meta_json.get("source_key", ""))
+            if record is not None and record.id != item.download_id:
+                stale.append(item.meta_json.get("source_key", "download"))
+    return stale

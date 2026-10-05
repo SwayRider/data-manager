@@ -57,7 +57,7 @@ def run_stage(run_id: int) -> dict:
     if result.status == "failed":
         runs.fail(session, run, StageFailedError(result.report.get("error", "Stage reported failure")), result.report)
         return {"status": "failed", "run_id": run.id}
-    runs.finish(session, run, result.report)
+    runs.finish(session, run, result.report, auto_approve=not runner.review_gate)
     return {"status": run.status, "run_id": run.id}
 
 

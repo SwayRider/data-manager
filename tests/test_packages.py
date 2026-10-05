@@ -145,3 +145,15 @@ def test_delete_and_prune_respect_protection(env):
     packages.prune(env.session, keep=2, dry_run=False)
     assert not (env.repo / tags[1]).exists() and (env.repo / tags[0]).exists()
     assert env.session.query(PackageLabel).filter_by(package_id=None).count() == 0
+
+
+def test_reserved_tag_keys_are_rejected_as_labels(env):
+    for key in ("date", "config", "created_by", "tool.valhalla", "resolved_hash.benelux"):
+        with pytest.raises(PackageError, match="Reserved tag"):
+            packages.create_package(env.session, env.config_id, ["valhalla"], labels={key: "x"})
+    assert not env.repo.exists() or not list(env.repo.iterdir())
+    pkg = packages.create_package(env.session, env.config_id, ["valhalla"], labels={"for": "q4"})
+    with pytest.raises(PackageError, match="Reserved tag"):
+        packages.edit_labels(env.session, pkg.tag, labels={"config": "other"})
+    auto = {l.key: l.value for l in pkg.labels if l.origin == "auto"}
+    assert auto["config"] == "dev-mini" and len(auto["date"]) == 10

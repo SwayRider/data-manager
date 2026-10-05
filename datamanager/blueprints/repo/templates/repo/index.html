@@ -1,7 +1,68 @@
 {% extends "base.html" %}
-{% from "_macros.html" import empty_state %}
 {% block title %}Repo{% endblock %}
 {% block content %}
 <h1>Repo</h1>
-{{ empty_state("Downloads, assets and assemblies appear here (Phase 2+).") }}
+<p class="muted">Packages are immutable, tagged copies of the approved build output (tiles, valhalla, pelias, geodata) of one configuration.</p>
+
+<h2>Repository</h2>
+<table class="resolved-table">
+  <tr><th>Folder</th><td><code>{{ repo.path }}</code>{% if not repo.exists %} <span class="muted">(not created yet)</span>{% endif %}</td></tr>
+  {% if repo.total %}
+  <tr><th>Filesystem</th><td>{{ repo.fstype or '?' }} {% if repo.mount %}<span class="muted">mounted at {{ repo.mount }}</span>{% endif %}</td></tr>
+  <tr><th>Space</th><td>{{ repo.free|filesize }} free of {{ repo.total|filesize }}</td></tr>
+  {% endif %}
+</table>
+{% for w in repo.warnings %}<p class="warn-line">{{ w }}</p>{% endfor %}
+
+<p class="muted">Packages are made, verified and cleaned up from <a href="{{ url_for('build.index') }}">Build</a> (stages Package, Verify package and Cleanup). This page shows the repository.</p>
+
+{% if recent_runs %}
+<section class="repo-section">
+<h2>Recent runs</h2>
+<table class="resolved-table">
+  <tr><th>Run</th><th>What</th><th>Package</th><th>Status</th><th>Started (UTC)</th></tr>
+  {% for r in recent_runs %}
+  <tr>
+    <td><a href="{{ url_for('build.run_detail', run_id=r.id) }}">run {{ r.id }}</a></td>
+    <td>{{ {'package': 'create package', 'package-verify': 'verify', 'cleanup': 'cleanup'}[r.stage_key] }}</td>
+    <td>{% set tag = (r.report_json or {}).get('summary', {}).get('tag') or r.params_json.get('tag') %}{% if tag %}<a href="{{ url_for('repo.detail', tag=tag) }}">{{ tag }}</a>{% endif %}</td>
+    <td><span class="badge status-{{ r.status }}">{{ r.status.replace('_', ' ') }}</span></td>
+    <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else 'waiting' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">Every run keeps its steps, progress and report; open one to follow it while it runs. All runs are also listed on Build.</p>
+</section>
+{% endif %}
+
+<h2>Packages</h2>
+<form class="filter-bar" method="get">
+  <label><span class="muted">Configuration</span><select name="config"><option value="">all</option>
+    {% for c in configs %}<option value="{{ c.id }}" {{ 'selected' if filters.config == c.id }}>{{ c.name }}</option>{% endfor %}</select></label>
+  <label><span class="muted">Class</span><select name="class"><option value="">all</option>
+    {% for c in classes %}<option value="{{ c }}" {{ 'selected' if filters.class == c }}>{{ c }}</option>{% endfor %}</select></label>
+  <label><span class="muted">Label</span><input type="text" name="label" value="{{ filters.label }}" size="16"></label>
+  <button>Filter</button>
+</form>
+{% if rows %}
+<table class="resolved-table">
+  <tr><th>Tag</th><th>Created (UTC)</th><th>Configuration</th><th>Classes</th><th>Size</th><th>Status</th><th>Labels</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('repo.detail', tag=r.p.tag) }}">{{ r.p.tag }}</a>{% if r.p.protected %} <span class="badge">protected</span>{% endif %}</td>
+    <td>{{ r.p.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+    <td>{{ r.config }}</td>
+    <td>{{ r.classes|join(', ') }}</td>
+    <td>{{ r.p.size_bytes|filesize }}</td>
+    <td>{% if r.p.status != 'complete' %}<span class="badge status-{{ r.p.status }}">{{ r.p.status }}</span>
+        {% elif r.p.verified_at %}<span class="badge status-approved" title="verified {{ r.p.verified_at.strftime('%Y-%m-%d %H:%M') }} UTC">verified</span>
+        {% else %}<span class="badge status-failed" title="not verified yet">unverified</span>{% endif %}</td>
+    <td>{% for l in r.user_labels %}<code>{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}</code> {% endfor %}</td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="muted">Setting <code>package.keep</code> = {{ keep }}: <code>flask packages-prune</code> keeps that many unprotected packages.</p>
+{% else %}
+<p class="empty-state">No packages{% if filters.config or filters.label or filters.class %} match this filter{% endif %} yet.</p>
+{% endif %}
 {% endblock %}

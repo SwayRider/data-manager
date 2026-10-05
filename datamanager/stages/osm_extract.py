@@ -29,7 +29,7 @@ class Input:
 
     @property
     def file(self) -> Path:
-        return assets.abs_path(self.asset) if self.asset is not None else downloads.abs_path(self.record)
+        return assets.input_path(self.asset) if self.asset is not None else downloads.input_path(self.record)
 
     @property
     def download_ids(self) -> list[int]:
@@ -217,7 +217,7 @@ class OsmExtractStage(StageRunner):
             if item.carve is None:
                 return source
             context.step_cb(f"{plan.name}: clip {item.iso2} to its carve polygon")
-            return osmium.extract(exe, source, assets.abs_path(item.carve), work / f"{prefix}-{item.iso2}-carved.osm.pbf")
+            return osmium.extract(exe, source, assets.input_path(item.carve), work / f"{prefix}-{item.iso2}-carved.osm.pbf")
 
         core_inputs = [carved(i, "core") for i in plan.of("core")]
         context.step_cb(f"{plan.name}: merge core ({len(core_inputs)} file(s))")
@@ -227,7 +227,7 @@ class OsmExtractStage(StageRunner):
         for item in plan.of("overlap"):
             source = carved(item, "overlap")
             context.step_cb(f"{plan.name}: clip {item.iso2} to the overlap polygon")
-            clips.append(osmium.extract(exe, source, assets.abs_path(plan.overlap_poly), work / f"overlap-{item.iso2}.osm.pbf"))
+            clips.append(osmium.extract(exe, source, assets.input_path(plan.overlap_poly), work / f"overlap-{item.iso2}.osm.pbf"))
         context.step_cb(f"{plan.name}: merge core and overlap")
         region_file = osmium.merge_latest(exe, [core_file, *clips], work / f"{plan.slug}.osm.pbf")
         return core_file, region_file
@@ -259,7 +259,7 @@ def _checks(plan: RegionPlan, entry: dict) -> list[str]:
         if part["ordered"] is False:
             warnings.append(f"The {label} file is not sorted.")
     if plan.overlap_poly is not None and full["bbox"]:
-        box = osmium.poly_bbox(assets.abs_path(plan.overlap_poly))
+        box = osmium.poly_bbox(assets.input_path(plan.overlap_poly))
         coverage = osmium.bbox_coverage(full["bbox"], box)
         if coverage is not None and coverage < MIN_COVERAGE:
             warnings.append(f"The data covers only {coverage:.0%} of the overlap polygon's bounding box.")

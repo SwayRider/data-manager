@@ -108,6 +108,9 @@ class ValhallaStage(StageRunner):
             plan.problems.append("The configuration has no region with a core country.")
         if plan.problems:
             return StageResult("failed", report={"error": "; ".join(plan.problems), "problems": plan.problems})
+        if plan.srtm_dir is not None and not Path(plan.srtm_dir).exists():
+            message = f"The unpacked elevation tiles ({plan.srtm_dir.name}) are gone (cleanup): run Download elevation (SRTM) again."
+            return StageResult("failed", report={"error": message, "problems": [message]})
 
         run_id = int(context.run_id)
         Path(context.work_dir).mkdir(parents=True, exist_ok=True)
@@ -150,7 +153,7 @@ class ValhallaStage(StageRunner):
                 with open(work / "tz.log", "w", encoding="utf-8") as log:
                     valhalla_data.build_timezones(session, tz_file, log)
             facts = valhalla_data.build_region(
-                session, assets.abs_path(region.pbf), plan.srtm_dir, work / region.slug, out_root / region.slug, tz_file,
+                session, assets.input_path(region.pbf), plan.srtm_dir, work / region.slug, out_root / region.slug, tz_file,
                 concurrency, step_cb=lambda step: context.step_cb(f"{region.name}: {step}"),
             )
             ids = {}

@@ -269,6 +269,42 @@ def _styles(session, config_id) -> StageStatus:
     return StageStatus("ok", "Style files match the Style tab.")
 
 
+def _package(session, config_id) -> StageStatus:
+    from datamanager.services import packages
+
+    newest = packages.newest(session, config_id)
+    if newest is None:
+        return StageStatus("todo", "No package of this configuration yet.")
+    stale = packages.stale_parts(session, newest)
+    tail = "" if newest.verified_at else " It is not verified yet."
+    if stale:
+        return StageStatus("outdated", f"{newest.tag} is behind the approved results: {', '.join(stale[:4])}{' …' if len(stale) > 4 else ''}.{tail}")
+    return StageStatus("ok", f"{newest.tag} holds the current approved results ({newest.size_bytes / 1e9:.0f} GB).{tail}")
+
+
+def _package_verify(session, config_id) -> StageStatus:
+    from datamanager.services import packages
+
+    newest = packages.newest(session, config_id)
+    if newest is None:
+        return StageStatus("blocked", "No package yet.")
+    if newest.verified_at is None:
+        return StageStatus("todo", f"{newest.tag} is not verified yet.")
+    return StageStatus("ok", f"{newest.tag} verified {newest.verified_at:%Y-%m-%d %H:%M} UTC.")
+
+
+def _cleanup(session, config_id) -> StageStatus:
+    from datamanager.services import packages
+
+    newest = packages.newest(session, config_id, verified=True)
+    if newest is None:
+        return StageStatus("blocked", "Needs a verified package.")
+    last = _latest_run(session, "cleanup", config_id)
+    if last is not None and last.status == "approved" and (last.params_json or {}).get("tag") == newest.tag:
+        return StageStatus("ok", f"Cleaned up after {newest.tag}.")
+    return StageStatus("todo", f"Choose what to remove after {newest.tag}.")
+
+
 def _region_is_current(asset, plan) -> bool:
     """Compare a built region with what it would be built from now. Files made before fingerprints were
     recorded are compared by the country files and overlap polygon their meta lists."""
@@ -319,6 +355,9 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "valhalla": lambda: _valhalla(session, config_id, resolved),
         "styles": lambda: _styles(session, config_id),
         "osm-extract": lambda: _regions(session, config_id, resolved),
+        "package": lambda: _package(session, config_id),
+        "package-verify": lambda: _package_verify(session, config_id),
+        "cleanup": lambda: _cleanup(session, config_id),
     }
     result = {}
     for key, build in content.items():
