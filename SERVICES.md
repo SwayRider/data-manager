@@ -1,100 +1,94 @@
 # SERVICES.md — changes required in sibling services
 
-Changes that other SwayRider services (separate repos, not part of this workspace) need
-when data-manager's build output changes. Everything about `tilesservice` below is derived
-from the legacy pipeline output and `infra` docs, **not from the tilesservice code** — items
-marked *(verify)* must be checked against that repo before implementation.
+Changes that other SwayRider services (separate repos, not part of this workspace) need when data-manager's build output changes. **Nothing in the sibling repos is changed
+from this machine** (CLAUDE.md → Workflow): the changes are implemented on the developers' machines from these documents. The tilesservice and swayrider-api parts below are
+derived from their code (tilesservice `642cb8a`, swayrider-api `b1f9ad3`, read on 2026-10-05); the full analysis, file/line references, code sketches, tests and the ordered
+list of pull requests are in **`TILESSERVICE-PMTILES.md`**, which is the handover document for that work. Items marked *(verify)* were not checked against code.
 
-## tilesservice — move from L0/L1/L2 to one Protomaps PMTiles tileset
+## tilesservice — one Protomaps PMTiles tileset and the map styles
 
-**Why:** data-manager's tiles stage will no longer build tiles. It downloads a regional extract of the
-Protomaps daily planet build (`pmtiles extract`) and delivers a single `tiles.pmtiles` (Protomaps basemap
-schema, Z0–15) plus light/dark `style.json` files, instead of three levels of custom-schema MBTiles.
-Decision of 2026-10-01 (it replaces the earlier plan of building OpenMapTiles-schema MBTiles with planetiler).
-See DESIGN.md → "Tiles stage: Protomaps PMTiles extract".
+**Why:** data-manager's tiles stage no longer builds tiles. It downloads the Protomaps daily **planet** build (`download-tiles`, ~140 GB, Protomaps basemap schema, Z0–15) and the
+release delivers it as `tiles.pmtiles` together with the map styles, glyphs and sprites, instead of three levels of custom-schema MBTiles.
+Decisions: 2026-10-01 (PMTiles instead of building tiles), **2026-10-05** (the whole planet is the tileset, no extent extract; `tilesservice` reads the file and serves tiles and styles;
+everything stays behind auth; public URLs in styles are filled in at serve time; separate per-user rate limit for the map in the gateway). Not chosen: serving the file statically and a
+Garage/S3 object store (the service accepts only gateway service tokens, clients never read the file; one file on one host needs no object store).
 
-### Today (legacy output, per `data-pipeline` README / `infra/dev/scripts/deploy-tiles.sh`)
-- `TILES_DATA_PATH/L0.mbtiles` (Z0–6 world), `TILES_DATA_PATH/L1/{tile}.mbtiles` (Z7–10) and
-  `TILES_DATA_PATH/L2/{tile}.mbtiles` (Z11–16), where `{tile}` is a 10° grid cell such as `N50_E000`.
-- The service picks the file from zoom + tile coordinate *(verify)*, serves vector tiles with the custom layers
-  `land, water, urban, forest, roads, railways, ferries, waterways, highway_labels, places, boundaries, country_labels`.
-- Deployed by extracting `tiles.tar` and restarting `tilesservice` (manual, see `deploy-tiles.sh`).
+### Today (code of `tilesservice` 642cb8a)
+- Go service; endpoints `GET /v1/tiles/ping` (public), `/v1/tiles/styles`, `/v1/tiles/styles/{name}`, `/v1/tiles/{tileset}/{z}/{x}/{y}`, all but `ping` need a **service token with scope `tiles:serve`**
+  (user JWTs are rejected; `swayrider-api` injects its token). Tiles come from `TILES_PATH` as MBTiles in L0/L1/L2 and 10° grid files (`internal/tileindex`, `internal/mbtiles` incl. merging of border tiles);
+  `{tileset}` is parsed and ignored; `z > 16` is rejected. Caches: memory LRU + SQLite-backed disk cache keyed by `z/x/y` only. Styles: `STYLES_PATH` (baked into the image), `text/template` with `{{.TilesBaseURL}}`,
+  list = `[{"name": …}]`. cgo is needed only for SQLite. Compose (`infra/dev*/layer-20`): bind mounts `${TILES_DATA_PATH}:/data/tiles:ro` and `${TILES_CACHE_PATH}:/data/cache`, `SERVICE_HOST/PORT/PREFIX` = the
+  gateway's public URL + `/v1/tiles`, port 34005.
 
-### What the new file is (checked against the live Protomaps builds, 2026-10-01)
-- PMTiles **v3**, clustered, gzip-compressed MVT, **Z0–15**, one file covering the configured extent
-  (not a grid of files). Metadata JSON holds `vector_layers`; the header holds bounds and zoom range.
-- Protomaps basemap schema, layers `boundaries, buildings, earth, landuse, natural, places, pois, roads, transit, water`
-  (verify the exact list and fields against the delivered file's metadata); features carry `kind` / `kind_detail`,
-  `min_zoom`, and `name` plus `name:xx` translations.
-- Built daily by Protomaps from their own OSM snapshot (build date and schema version end up in the file's metadata
-  and in data-manager's asset record), not from our Geofabrik extracts.
+### The new file (checked against the live Protomaps builds, 2026-10-01)
+PMTiles **v3**, clustered, gzip-compressed MVT, **Z0–15**, the whole planet; metadata JSON holds `vector_layers`, the header bounds and zoom range. Protomaps basemap schema, layers
+`boundaries, buildings, earth, landuse, natural, places, pois, roads, transit, water`; features carry `kind`/`kind_detail`, `min_zoom`, `name` and `name:xx`. Built daily from Protomaps' own OSM snapshot (build date and
+schema version are in the file's metadata and in data-manager's asset record).
 
-### Target
-1. **Single tileset.** Open one `tiles.pmtiles` (path from config, see 2). Two ways to serve it *(decide with the service
-   owner)*:
-   - **(a) Server-side reader (recommended).** Read the file with the go-pmtiles library (header, directory lookup, Range
-     reads of the file) and keep one tile endpoint, `/{z}/{x}/{y}` (`.mvt` suffix if the client needs one): the tile bytes are
-     already gzip-compressed MVT, pass them through with `Content-Encoding: gzip`, `Content-Type: application/x-protobuf`.
-     Return 204/404 for missing tiles and **allow requests above the max zoom** (clients over-zoom; the file is Z0–15).
-     Clients keep a plain `tiles` URL template, which is what MapLibre Native expects.
-   - **(b) Static file with HTTP Range.** Serve `tiles.pmtiles` as an asset (Range, CORS, `ETag`) and let clients read it
-     with the `pmtiles://` protocol. No tile endpoint; works for MapLibre GL JS with the `pmtiles` protocol plugin;
-     whether MapLibre Native can read it must be verified before choosing this.
-   Remove the zoom/grid-cell file selection and the multi-file handle cache in either case.
-2. **Config.** `TILES_DATA_PATH` points at a directory containing `tiles.pmtiles` (or directly at the file). The file is
-   replaced on every release, never modified in place. Reload the handle on deploy: either a restart (as today) or watch the
-   release pointer symlink `current/` *(verify how it is mounted in `infra/dev/layer-20`)*.
-3. **TileJSON.** `GET /tiles.json` (or `/{name}.json`) built from the PMTiles header and metadata (`name, bounds, center,
-   minzoom, maxzoom, attribution, vector_layers`), with the public `tiles` URL template, so MapLibre can use `"url"` instead of
-   hard-coded layer/zoom info. Attribution must contain "© OpenStreetMap contributors" (no OpenMapTiles credit any more;
-   keep the Protomaps notice that ships with the styles).
-4. **Style, glyphs, sprites** (new; MapLibre needs them and today the style is not served by data-manager):
-   - `GET /styles/light.json`, `/styles/dark.json` — served from the release directory (`style-light.json`,
-     `style-dark.json`, produced by data-manager for the Protomaps schema with the source/glyphs/sprite URLs filled in).
-   - `GET /fonts/{fontstack}/{range}.pbf` — static glyph PBFs (source: the `protomaps/basemaps-assets` repository, Noto Sans
-     stacks); shipped as a data directory next to the tiles or embedded.
-   - `GET /sprites/{name}[@2x].{json,png}` — sprite sheets from the same assets repository, matching the styles.
-   - CORS for the client origins, `Cache-Control: public, max-age` for glyphs/sprites, short cache + `ETag` for style/tiles.
-5. **Health/metrics.** Keep the existing health endpoint; expose the active tileset's build date and schema version (from the
-   PMTiles metadata) so deploys can verify which release is live.
+### Contract: the release directory (data-manager writes, `tilesservice` only reads)
+```
+<TILES_ROOT>/                              bind-mounted read-only into the container
+  current -> releases/<id>/tiles           RELATIVE symlink inside the mount (an absolute host path does not resolve in the container)
+  releases/<id>/tiles/
+    tiles.pmtiles                          the approved planet build; never modified in place
+    manifest.json
+    styles/<style id>/<version>/light.json    one pair per style; identical layer ids in both variants (smooth setStyle switch)
+    styles/<style id>/<version>/dark.json
+    glyphs/<fontstack>/<range>.pbf         self-hosted; the font stacks the styles use ("Noto Sans Regular", …)
+    sprites/<name>[@2x].{json,png}         one sheet per Protomaps flavor (light, dark, white, black, grayscale)
+```
+`manifest.json` (schema 1; written by the data-manager release step, read at startup and on reload):
+```json
+{"schema": 1, "release": "r-20261005-1",
+ "tileset": {"name": "planet", "build": "20261004", "date": "2026-10-04", "schema_version": "4.15.2", "file": "tiles.pmtiles"},
+ "styles": [{"id": "classic", "label": "Classic", "version": "3", "default": true,
+             "variants": {"light": "styles/classic/3/light.json", "dark": "styles/classic/3/dark.json"}}]}
+```
+Style files are **Go templates** rendered by `tilesservice` per request (the mechanism exists today): `"tiles": ["{{.TilesBaseURL}}/{{.Tileset}}/{z}/{x}/{y}"]`, `"glyphs": "{{.TilesBaseURL}}/fonts/{fontstack}/{range}.pbf"`,
+`"sprite": "{{.TilesBaseURL}}/sprites/<flavor>"`, source `"maxzoom": 15`. `TilesBaseURL` = `SERVICE_HOST[:SERVICE_PORT]SERVICE_PREFIX` (the **gateway's** public URL + `/v1/tiles`); `Tileset` = the tileset name from the manifest.
+MapLibre's `{z}/{x}/{y}` use single braces and do not collide with `{{ }}`. The release directory is **mounted**, not copied (140 GB per release; the data root and the tiles disk differ); the previous release stays for rollback.
 
-Note: the styles exported by data-manager (Configure → Style) are Protomaps-schema styles (`@protomaps/basemaps` flavors, source id
-`protomaps`, source URL from Settings → Public URLs `public.tiles_url`, e.g. `pmtiles://https://host/tiles.pmtiles`; glyphs/sprite
-default to the public `protomaps/basemaps-assets` pages and can be overridden with `public.glyphs_url`/`public.sprite_url` or
-`?tiles_url=&glyphs=&sprite=` on the download links).
+### Public API (all under `/v1/tiles/`, all behind the gateway's auth and `tiles:serve`)
+| Endpoint | Behaviour |
+|---|---|
+| `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | `tileset` is meaningful: `base` = legacy MBTiles (kept during the migration), `planet` = PMTiles. Gzip tiles pass through; z/x/y validated; 204 outside the file's zoom range or for missing tiles |
+| `GET /v1/tiles/{tileset}/tiles.json` | TileJSON from the PMTiles header/metadata (`bounds, center, minzoom, maxzoom, attribution` incl. "© OpenStreetMap contributors", `vector_layers`, `tiles`) |
+| `GET /v1/tiles/styles` | backwards compatible list `[{name, id, label, version, variants}]`; legacy names `light`/`dark` stay as aliases of the default style |
+| `GET /v1/tiles/styles/{name}`, `/styles/{id}/{variant}`, `/styles/{id}/{version}/{variant}` | rendered style JSON (templates filled in); versioned URLs immutable, unversioned short-lived, `ETag` |
+| `GET /v1/tiles/fonts/{fontstack}/{range}.pbf`, `/sprites/{name}[@2x].{json,png}` | static assets from the release directory, long cache |
+| `GET /v1/tiles/ping` (liveness, public upstream) and a readiness endpoint | readiness reports tileset build, schema version, release and style versions |
+
+Client flow: list styles -> user picks a style `id` -> the app takes the `light` or `dark` variant of the system theme and switches when the theme changes. Style versions stay reachable while apps use them.
+
+### What `tilesservice` has to change (summary; details, code sketches and tests in `TILESSERVICE-PMTILES.md` §3–§6)
+1. **PR 0, independent:** fix the gzip pass-through that ignores `Accept-Encoding` (`http_tile.go:143-154`) and the test that locks it in.
+2. PMTiles reader (library `go-pmtiles` or ~300 own lines), tile endpoint with header-driven zoom limits, `tileset` selection, ETag.
+3. Release holder with atomic reload (SIGHUP/polling the `current` symlink), readiness, HTTP server timeouts (review 2026-08-19 #1).
+4. Styles: manifest-driven list/variants/versions, template variables `TilesBaseURL` and `Tileset`, ETag/Cache-Control. 5. Glyph and sprite handlers.
+6. Remove the tile caches (they key on `z/x/y` without a tileset id and are pointless for pre-gzipped tiles), MBTiles/grid code after the migration, SQLite and cgo; keep accepting `COMPRESSION_*`/`DISK_CACHE_*` for one release.
+Compose: mount the directory that holds `current`; env `TILES_ROOT`; drop the cache volume. Migration: legacy `base` and the new tileset side by side (the `{tileset}` segment), clients switch, then the legacy code goes.
 
 ### Client (MapLibre GL JS / Native)
-- Point the map at the new style URL(s) (`/styles/light.json` / `dark.json`, choose by system theme) instead of the
-  hand-written style; remove client-side overrides that referenced the old layers (`places`, `roads`, `highway_labels`…).
-- Layer/attribute mapping for any client code that queries features: `places` → `places` (Protomaps: `kind`, `kind_detail`,
-  `min_zoom`, `population_rank`-style fields *(verify)*, `name:xx`), `roads` and `highway_labels` → `roads` (`kind`,
-  `kind_detail`, `ref`, `network` *(verify)*), `water` → `water`, `forest`/`urban` → `landuse`, `natural`, `earth`;
-  `boundaries` and `pois`, `transit`, `buildings` are new and optional.
-- No more L0/L1/L2 zoom ranges: one source with `maxzoom: 15`.
-- **Under option (b):** MapLibre GL JS needs the `pmtiles` protocol plugin registered (`addProtocol`) and a `pmtiles://` source URL;
-  MapLibre Native support must be verified first.
-- **Lost compared with the legacy tiles** (Protomaps tiles are not ours to change): the yellow motorway ramp colouring
-  (`motorway_link_type`), the A/E/N road shield data beyond `ref`/`network`, the legacy `population` string, the 26-language
-  Natural Earth country labels (use `name:xx`), the Polsby-Popper forest/urban filtering. A custom layer would require
-  building tiles ourselves again, which is the fallback if the schema ever blocks a requirement.
+- All map requests (style, tiles, glyphs, sprites) need the user's JWT: web with the `access_token` cookie, native with an `Authorization` header on every request below the tiles base URL (`transformRequest`), refreshed before the 15-minute expiry.
+- Style list -> pick -> light/dark by system theme. Remove overrides that referenced the old layers; layer/attribute mapping: `places` -> `places` (`kind`, `kind_detail`, `min_zoom`, `name:xx`), `roads`/`highway_labels` -> `roads` (`kind`, `kind_detail`, `ref`, `network`),
+  `water` -> `water`, `forest`/`urban` -> `landuse`, `natural`, `earth`; `boundaries`, `pois`, `transit`, `buildings` are new. One source with `maxzoom: 15`, the client over-zooms.
+- Lost compared with the legacy tiles (Protomaps tiles are not ours to change): yellow motorway ramps, A/E/N shield data beyond `ref`/`network`, the legacy `population` string, 26-language country labels (use `name:xx`), the forest/urban filtering.
+  A custom layer would mean building tiles ourselves again, the fallback if the schema ever blocks a requirement.
 
-### Rollout
-- Run old and new side by side: new endpoints under a versioned prefix (e.g. `/v2/`) while the legacy L0/L1/L2 handler stays.
-- data-manager's deploy step switches the active release pointer; rollback = previous release directory.
-- Switch the client style URL once the new tileset is verified; then remove the legacy handler and `L1/`, `L2/` directories.
-- data-manager no longer needs planetiler, a JRE, tippecanoe or GDAL for tiles; deploy only has to deliver the PMTiles file
-  and the two style files (plus glyph/sprite assets when they change).
+## swayrider-api — the gateway in front of `tilesservice` (code of `b1f9ad3`)
+It reverse-proxies the whole `/v1/tiles/` prefix (`internal/server/routes.go:57`, `internal/handlers/tiles.go`) behind `RequireVerifiedUser` with its own service token (scopes include `tiles:serve`), so **new `tilesservice` endpoints need no route** and headers
+(`ETag`, `Cache-Control`, `Content-Encoding`, `If-None-Match`) pass through. Required changes (details in `TILESSERVICE-PMTILES.md` §8):
+1. **Rate limit class `tiles`, per user** (`internal/middleware/ratelimit.go`, `config.go`, `server.go`): today `/v1/tiles/*` is class `public`, 600 requests/min **per IP** shared with `/health` and public keys. New `RATE_LIMIT_USER_TILES`, default 3000/min per user (estimate; set from measured traffic).
+2. `MaxIdleConnsPerHost` of the proxy transport (10) raised for map bursts (e.g. 50–100) in `internal/handlers/proxy.go`.
+3. Documentation: README line "No authentication required" for tiles is wrong (verified user is required); `API.md` and `api/openapi.yaml` list the new sub-paths and the new rate-limit class.
+4. Check that the service-token refresh fix of `review/CODE_REVIEW_2026-08.md` is deployed (a stale token once caused weeks of tile failures).
 
-### Open questions for the tilesservice owner
-- Where is the current style JSON kept, and who serves glyphs/sprites today?
-- Can tilesservice read PMTiles (go-pmtiles library) and, if the client reads the file itself, does MapLibre Native support
-  the `pmtiles://` protocol? This decides option (a) vs (b) above.
-- Does the service cache open file handles or read on every request? Any per-file logic tied to `N50_E000` names?
-- Is the tileset public (through Traefik) or internal only — affects CORS and the URL template in TileJSON/styles.
-- Size and egress: the Z0–15 extract for the configured extent is expected to be several GB (to be measured); is serving
-  Range reads of a file that size through Traefik acceptable under option (b)?
+### Open questions
+- Tileset name (`planet`?) and whether the build id is part of it; go-pmtiles library or own reader (spike); the real `RATE_LIMIT_USER_TILES` after measuring; MapLibre version honours `source.maxzoom: 15` (standard); Protomaps' terms for repeated automated downloads and public serving;
+  disk for two planets (current + previous) where the release directory lives.
 
 ## Other services
 - **routerservice / Valhalla, searchservice / Pelias:** unaffected by the tile schema change.
 - **Pelias (planned, see DESIGN.md → "Locality boundaries"):** the boundary/placeholder patch is a separate change list, tracked there.
+- **Pelias services (deploy contract, see DESIGN.md → "Pelias stage"):** per region the `pelias` stage delivers `pelias-index-snapshot` (restored into the live Elasticsearch, alias switched), `pelias-config` (the production `pelias.json`) and `pelias-wof` (the WOF `sqlite/` directory the PIP service reads, patched databases included); `pelias-interpolation` delivers `street.db` and `address.db` for an interpolation service (`./interpolate server address.db street.db`, port 4300) that does not exist in `infra` yet; the API's `pelias.json` needs `interpolation.client = {adapter: http, host: http://pelias-interpolation:4300}` when it does. The placeholder store stays the approved `placeholder:store` download.
 - **regionservice:** consumes region definitions; no tile-schema dependency expected *(verify)*.
