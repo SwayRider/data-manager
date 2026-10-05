@@ -19,6 +19,16 @@ class PackageStage(StageRunner):
             note=params.get("note", ""), run_id=int(context.run_id), progress=context.progress_cb,
             step=context.step_cb, check_status=not params.get("force", False),
         )
+        verified = None
+        if params.get("verify"):
+            context.step_cb(f"Verify {package.tag}")
+            problems = packages.verify_package(session, package.tag, progress=context.progress_cb)
+            if problems:
+                return StageResult("failed", report={
+                    "error": f"{package.tag} was created but {len(problems)} file(s) failed verification: " + "; ".join(problems[:3]),
+                    "summary": {"tag": package.tag, "path": package.path, "size_bytes": package.size_bytes, "files": len(package.items),
+                                "classes": {}, "problems": problems}})
+            verified = True
         by_class: dict[str, dict] = {}
         for item in package.items:
             entry = by_class.setdefault(item.class_, {"files": 0, "bytes": 0})
@@ -26,7 +36,7 @@ class PackageStage(StageRunner):
             entry["bytes"] += item.size_bytes
         return StageResult("success", report={
             "summary": {"tag": package.tag, "path": package.path, "size_bytes": package.size_bytes,
-                        "files": len(package.items), "classes": by_class},
+                        "files": len(package.items), "classes": by_class, "verified": bool(verified)},
             "tags": {l.key: l.value for l in package.labels if l.origin == "auto"},
             "warnings": [],
         })

@@ -1,7 +1,7 @@
 {% set summary = run.report_json.get('summary', {}) %}
 {% if run.stage_key == 'package' %}
 <p>Package <a href="{{ url_for('repo.detail', tag=summary.tag) }}"><strong>{{ summary.tag }}</strong></a>:
-  {{ summary.files }} file(s), {{ summary.size_bytes|filesize }} in <code>{{ summary.path }}</code>.
+  {{ summary.files }} file(s), {{ summary.size_bytes|filesize }} in <code>{{ summary.path }}</code>{% if summary.verified %}, verified{% endif %}.
   <a href="{{ url_for('repo.detail', tag=summary.tag) }}">Open it</a> to verify it and to clean up afterwards.</p>
 <table class="resolved-table">
   <tr><th>Class</th><th>Files</th><th>Size</th></tr>

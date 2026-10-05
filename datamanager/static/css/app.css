@@ -157,3 +157,8 @@ a.stage-dot:hover { filter: brightness(1.15); box-shadow: 0 0 0 2px var(--border
 .tag-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
 .tag-chip { padding: .15rem .55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); }
 .stacked-form .field-title { font-weight: 600; }
+dialog.modal.wide { width: min(46rem, 94vw); max-height: 90vh; overflow-y: auto; }
+dialog.modal .stacked-form label.field { display: grid; margin: 0; }
+dialog.modal .stacked-form input[type=text], dialog.modal .stacked-form textarea, dialog.modal .stacked-form select { display: block; width: 100%; margin: 0; }
+dialog.modal .check-list label { display: grid; margin: 0; }
+dialog.modal input[type=checkbox] { display: inline-block; width: auto; margin: 0; }

@@ -39,7 +39,7 @@ DOWNLOAD_CATEGORIES = {
     "pelias_sources": (("wof:", "geonames:", "openaddresses:", "placeholder:"), False),
     "overture_gtfs": (("overture:", "gtfs:"), False),
 }
-IDLE_STAGES = ("package", "package-verify")  # runs of these never conflict with a cleanup
+IDLE_STAGES = ("package", "package-verify", "cleanup")  # runs of these never conflict with a cleanup
 
 
 @dataclass

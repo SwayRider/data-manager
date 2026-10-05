@@ -1,10 +1,12 @@
-from flask import Blueprint, abort, redirect, render_template, request, url_for
+from flask import Blueprint, Response, abort, redirect, render_template, request, url_for
 
 from datamanager.db import SessionLocal
-from datamanager.errors import ValidationError
+from datamanager.errors import DataManagerError, PackageError, ValidationError
 from datamanager.models import DownloadRecord
 from datamanager.services import config_profiles as profiles
-from datamanager.services import downloads, resolve, runs
+from datamanager.services import cleanup as cleanup_service
+from datamanager.services import downloads, packages, resolve, runs
+from datamanager.services.cleanup_categories import CATEGORIES
 from datamanager.services import settings as settings_service
 from datamanager.stages.border import plan_inputs as border_inputs
 from datamanager.stages.download_osm import planned_paths
@@ -85,6 +87,16 @@ STAGES = (
      "Builds each region's core PBF (core countries merged, carved ones clipped) and full PBF (core plus the "
      "overlap countries clipped to the overlap polygon). Needs the approved country PBFs and approved polygons; "
      "regions can be built one at a time."),
+    ("package", "Package",
+     "Copies the approved results of this configuration (tiles, routing, Pelias, geodata) into a new, immutable, tagged package in the "
+     "package repository (Repo), with the fixed tags date and config plus your own labels. Optionally verifies the copy afterwards. "
+     "Needs every chosen part approved and up to date."),
+    ("package-verify", "Verify package",
+     "Reads every file of a package again and compares its SHA-256 with package.json. Needed before the cleanup, and any time later "
+     "to prove the package is still intact."),
+    ("cleanup", "Cleanup",
+     "Frees SSD space after packaging: removes the files of the categories you tick (intermediate PBFs, snapshots, source downloads, ...) "
+     "once a verified package holds the results. Approved results are purged, not forgotten: their records and hashes stay."),
 )
 
 
@@ -151,6 +163,13 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
         elif key == "wof-patch":
             problems = wof_patch_inputs(session, resolved).problems
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
+        elif key == "package":
+            everything = packages.plan(session, config.id, None)  # blocked only when no class has anything to package
+            states[key] = None if everything.items else (everything.problems[0] if everything.problems else "Nothing to package yet.")
+        elif key == "package-verify":
+            states[key] = None if packages.newest(session, config.id) else "No package of this configuration yet."
+        elif key == "cleanup":
+            states[key] = None if packages.newest(session, config.id, verified=True) else "No verified package yet: verify one first."
         elif key == "polygons" and not any(r["core"] for r in resolved["regions"]):
             states[key] = "No region has a core country."
         elif key == "valhalla":
@@ -180,6 +199,57 @@ def _runs_page(session, config_id: int | None) -> dict:
             "page": page, "pages": pages, "per_page": per_page, "total": total, "choices": RUNS_PER_PAGE}
 
 
+def _package_ui(session, config) -> dict:
+    """What the Package, Verify and Cleanup modals need."""
+    complete = session.query(packages.Package).filter_by(config_profile_id=config.id, status="complete").order_by(packages.Package.id.desc()).all()
+    return {"classes": packages.CLASSES, "class_help": packages.CLASS_HELP, "fixed": packages.default_tags(config.name),
+            "packages": complete, "verified": [p for p in complete if p.verified_at], "categories": CATEGORIES}
+
+
+def _problem(message: str, status: int = 422) -> Response:
+    return Response(message, status=status, mimetype="text/plain")
+
+
+@bp.post("/package/plan")
+def package_plan():
+    """Live plan inside the Package modal (htmx)."""
+    from datamanager.blueprints.repo.routes import _repo_status
+
+    session = SessionLocal()
+    config = _current_config()
+    if config is None:
+        abort(404)
+    classes = [c for c in request.form.getlist("classes") if c in packages.CLASSES] or list(packages.CLASSES)
+    error = the_plan = None
+    try:
+        packages.check_labels(packages.parse_labels(request.form.get("labels", "")))
+        the_plan = packages.plan(session, config.id, classes, check_status=not request.form.get("force"))
+    except DataManagerError as exc:
+        error = exc.message
+    return render_template("build/_package_plan.html", plan=the_plan, error=error, free=_repo_status().get("free"))
+
+
+@bp.post("/cleanup/plan")
+def cleanup_plan():
+    """Categories with their sizes for the chosen package inside the Cleanup modal (htmx)."""
+    session = SessionLocal()
+    config = _current_config()
+    tag = request.form.get("tag", "")
+    package = session.query(packages.Package).filter_by(tag=tag, config_profile_id=config.id if config else None).first()
+    if package is None:
+        return render_template("build/_cleanup_plan.html", error="Choose a verified package.", categories=CATEGORIES)
+    try:
+        full = cleanup_service.plan(session, tag)
+    except PackageError as exc:
+        return render_template("build/_cleanup_plan.html", error=exc.message, categories=CATEGORIES)
+    per_category = full.by_category()
+    ticked = {k for k, on in cleanup_service.defaults(session).items() if on}
+    checked = {c for c in request.form.getlist("category") if c in per_category} if request.form.get("touched") else ticked
+    return render_template("build/_cleanup_plan.html", error=None, categories=CATEGORIES, per_category=per_category, checked=checked,
+                           busy=full.busy, selected_bytes=sum(per_category[k]["bytes"] for k in checked),
+                           selected_count=sum(per_category[k]["count"] for k in checked))
+
+
 @bp.get("/")
 def index():
     session = SessionLocal()
@@ -197,6 +267,7 @@ def index():
         tiles=_planet_info(TILES_KEY),
         region_names=[r["name"] for r in resolved["regions"] if r["core"]] if config else [],
         runs=_runs_page(session, config.id if config else None),
+        package_ui=_package_ui(session, config) if config else None,
     )
 
 
@@ -216,6 +287,35 @@ def start(stage_key: str):
             params["use_existing"] = True
         if request.form.get("local_file", "").strip():
             params["local_file"] = request.form["local_file"].strip()
+    if stage_key == "package":
+        classes = [c for c in request.form.getlist("classes") if c in packages.CLASSES] or list(packages.CLASSES)
+        force = bool(request.form.get("force"))
+        try:
+            labels = packages.parse_labels(request.form.get("labels", ""))
+            packages.check_labels(labels)
+            problems = packages.plan(session, config.id, classes, check_status=not force).problems
+        except DataManagerError as exc:
+            return _problem(exc.message)
+        if problems:
+            return _problem("Cannot package: " + "; ".join(problems))
+        params = {"classes": classes, "labels": labels, "note": request.form.get("note", "")[:500], "force": force,
+                  "verify": bool(request.form.get("verify")), "created_by": "ui"}
+    elif stage_key == "package-verify":
+        package = session.query(packages.Package).filter_by(tag=request.form.get("tag", ""), config_profile_id=config.id, status="complete").first()
+        if package is None:
+            return _problem("Choose a package of this configuration.")
+        params = {"tag": package.tag}
+    elif stage_key == "cleanup":
+        chosen = [c for c in request.form.getlist("category")]
+        try:
+            if not chosen:
+                raise PackageError("Tick at least one category.")
+            the_plan = cleanup_service.plan(session, request.form.get("tag", ""), chosen)
+        except PackageError as exc:
+            return _problem(exc.message)
+        if the_plan.busy:
+            return _problem(f"Run(s) {', '.join(str(r) for r in the_plan.busy)} are queued or running: wait for them before cleaning up.")
+        params = {"tag": request.form["tag"], "categories": chosen}
     run = runs.create_run(session, stage_key, config.id, params=params)
     try:
         runs.set_job_id(session, run, enqueue_run(run.id))

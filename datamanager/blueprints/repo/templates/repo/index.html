@@ -14,29 +14,7 @@
 </table>
 {% for w in repo.warnings %}<p class="warn-line">{{ w }}</p>{% endfor %}
 
-<section class="repo-section">
-<h2>New package</h2>
-<form class="stacked-form" method="post" action="{{ url_for('repo.create') }}"
-      hx-post="{{ url_for('repo.plan_preview') }}" hx-trigger="load, change" hx-target="#package-plan" hx-swap="innerHTML">
-  <label class="field"><span>Configuration</span>
-    <select name="config">{% for c in configs %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}</select></label>
-  <fieldset><legend>What to package</legend>
-    <div class="check-list">
-      {% for c in classes %}
-      <label><input type="checkbox" name="classes" value="{{ c }}" checked><span><strong>{{ c }}</strong></span>
-        <span class="hint">{{ class_help[c] }}</span></label>
-      {% endfor %}
-    </div>
-  </fieldset>
-  <div class="field"><span class="field-title">Fixed tags <span class="hint">added to every package; they cannot be changed</span></span>
-    {% include "repo/_fixed_tags.html" %}</div>
-  <label class="field"><span>Extra labels <span class="hint">optional, one per line: <code>key=value</code> or a bare label</span></span>
-    <textarea name="labels" rows="3" placeholder="candidate&#10;for=q4"></textarea></label>
-  <label class="field"><span>Note <span class="hint">optional</span></span><input type="text" name="note" maxlength="500"></label>
-  <div class="check-list"><label><input type="checkbox" name="force" value="1"><span>Package even when a stage is outdated, unreviewed or running</span></label></div>
-  <div id="package-plan" class="plan-panel"><p class="muted">Checking what would be packaged…</p></div>
-</form>
-</section>
+<p class="muted">Packages are made, verified and cleaned up from <a href="{{ url_for('build.index') }}">Build</a> (stages Package, Verify package and Cleanup). This page shows the repository.</p>
 
 {% if recent_runs %}
 <section class="repo-section">
@@ -46,7 +24,7 @@
   {% for r in recent_runs %}
   <tr>
     <td><a href="{{ url_for('build.run_detail', run_id=r.id) }}">run {{ r.id }}</a></td>
-    <td>{{ 'create package' if r.stage_key == 'package' else 'verify' }}</td>
+    <td>{{ {'package': 'create package', 'package-verify': 'verify', 'cleanup': 'cleanup'}[r.stage_key] }}</td>
     <td>{% set tag = (r.report_json or {}).get('summary', {}).get('tag') or r.params_json.get('tag') %}{% if tag %}<a href="{{ url_for('repo.detail', tag=tag) }}">{{ tag }}</a>{% endif %}</td>
     <td><span class="badge status-{{ r.status }}">{{ r.status.replace('_', ' ') }}</span></td>
     <td>{{ r.started_at.strftime('%Y-%m-%d %H:%M') if r.started_at else 'waiting' }}</td>
@@ -76,8 +54,9 @@
     <td>{{ r.config }}</td>
     <td>{{ r.classes|join(', ') }}</td>
     <td>{{ r.p.size_bytes|filesize }}</td>
-    <td><span class="badge status-{{ 'approved' if r.p.status == 'complete' else r.p.status }}">{{ r.p.status }}</span>
-        {% if r.p.verified_at %}<span class="muted">verified</span>{% endif %}</td>
+    <td>{% if r.p.status != 'complete' %}<span class="badge status-{{ r.p.status }}">{{ r.p.status }}</span>
+        {% elif r.p.verified_at %}<span class="badge status-approved" title="verified {{ r.p.verified_at.strftime('%Y-%m-%d %H:%M') }} UTC">verified</span>
+        {% else %}<span class="badge status-failed" title="not verified yet">unverified</span>{% endif %}</td>
     <td>{% for l in r.user_labels %}<code>{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}</code> {% endfor %}</td>
   </tr>
   {% endfor %}

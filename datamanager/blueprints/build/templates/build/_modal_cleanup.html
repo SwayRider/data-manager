@@ -1,0 +1,12 @@
+<dialog class="modal wide" id="modal-cleanup">
+  <form class="stacked-form" method="post" action="{{ url_for('build.start', stage_key='cleanup', config=config.id) }}"
+        hx-post="{{ url_for('build.cleanup_plan', config=config.id) }}" hx-trigger="plan, change" hx-target="#cleanup-plan" hx-swap="innerHTML"
+        onsubmit="return confirm('Remove the ticked files from the SSD? The packaged results stay in the package.')">
+    <h3>Clean up after packaging</h3>
+    <label class="field"><span>Package <span class="hint">only verified packages are offered</span></span>
+      <select name="tag">{% for p in package_ui.verified %}<option value="{{ p.tag }}">{{ p.tag }} · verified {{ p.verified_at.strftime('%Y-%m-%d') }}</option>{% endfor %}</select></label>
+    <div id="cleanup-plan" class="plan-panel"><p class="muted">Loading…</p></div>
+    <div class="form-actions"><button class="danger" {{ 'disabled' if not package_ui.verified }}>Start cleanup</button>
+      <button type="button" onclick="this.closest('dialog').close()">Cancel</button></div>
+  </form>
+</dialog>

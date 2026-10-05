@@ -24,6 +24,12 @@ from datamanager.services import downloads, regions as region_service, resolve
 
 CLASSES = ("tiles", "valhalla", "pelias", "geodata")
 SCHEMA = 1
+CLASS_HELP = {
+    "tiles": "Protomaps planet PMTiles and the map styles",
+    "valhalla": "Routing tiles, admin and timezone databases per region",
+    "pelias": "Elasticsearch snapshot, pelias.json, WOF and interpolation databases per region",
+    "geodata": "Region outlines and border crossings",
+}
 CHUNK = 8 * 1024 * 1024
 FREE_SPACE_FACTOR = 1.05
 PROGRESS_EVERY = 1.0  # seconds between progress updates (every one is a DB commit)
@@ -480,3 +486,37 @@ def settings_keep(session: Session) -> int:
     from datamanager.services import settings as settings_service
 
     return settings_service.get(session, "package.keep")
+
+
+def parse_labels(text: str) -> dict[str, str]:
+    """`key=value` or bare labels, one per line or comma separated."""
+    labels = {}
+    for part in text.replace(",", "\n").splitlines():
+        part = part.strip()
+        if part:
+            key, _, value = part.partition("=")
+            labels[key.strip()[:100]] = value.strip()[:300]
+    return labels
+
+
+def newest(session: Session, config_id: int, verified: bool = False) -> Package | None:
+    query = session.query(Package).filter_by(config_profile_id=config_id, status="complete")
+    if verified:
+        query = query.filter(Package.verified_at.isnot(None))
+    return query.order_by(Package.id.desc()).first()
+
+
+def stale_parts(session: Session, package: Package) -> list[str]:
+    """What the package holds that is no longer the current approved result (for the Build status)."""
+    stale = []
+    for item in package.items:
+        if item.asset_id:
+            kind, name = item.meta_json.get("asset_type"), item.meta_json.get("name")
+            current = asset_service.current(session, package.config_profile_id, kind, name) if kind and name else None
+            if current is not None and current.id != item.asset_id:
+                stale.append(f"{kind} {name}")
+        elif item.download_id:
+            record = downloads.resolve_version(session, item.meta_json.get("source_key", ""))
+            if record is not None and record.id != item.download_id:
+                stale.append(item.meta_json.get("source_key", "download"))
+    return stale

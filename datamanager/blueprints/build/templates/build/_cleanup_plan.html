@@ -1,0 +1,22 @@
+{% if error %}<p class="error">{{ error }}</p>
+{% else %}
+<p class="muted">Approved results are <em>purged</em>: the file goes, the record with its hash stays, so stages keep showing as up to date; a later stage that
+  needs a purged file tells you which stage to run again. The ticks are the defaults of Settings → Cleanup. Carve-out polygons, Natural Earth,
+  country geometry and tools are never touched.</p>
+{% if busy %}<p class="warn-line">Run(s) {{ busy|join(', ') }} are queued or running: the cleanup refuses to start until they are done.</p>{% endif %}
+<input type="hidden" name="touched" value="1">
+<table class="resolved-table">
+  <tr><th></th><th>Category</th><th>Items</th><th>Frees</th><th>Skipped</th></tr>
+  {% for c in categories %}
+  {% set e = per_category[c.key] %}
+  <tr>
+    <td><input type="checkbox" name="category" value="{{ c.key }}" {{ 'checked' if c.key in checked }}></td>
+    <td><strong>{{ c.label }}</strong><br><span class="muted">{{ c.help }}</span></td>
+    <td>{{ e.count }}</td><td>{{ e.bytes|filesize }}</td>
+    <td>{% if e.skipped %}<details><summary>{{ e.skipped|length }}</summary>
+      {% for i in e.skipped %}<div class="muted">{{ i.label }}: {{ i.skip }}</div>{% endfor %}</details>{% else %}0{% endif %}</td>
+  </tr>
+  {% endfor %}
+  <tr><th></th><th>Selected</th><th>{{ selected_count }}</th><th>{{ selected_bytes|filesize }}</th><th></th></tr>
+</table>
+{% endif %}

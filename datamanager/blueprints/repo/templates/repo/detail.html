@@ -2,7 +2,10 @@
 {% block title %}{{ package.tag }}{% endblock %}
 {% block content %}
 <p><a href="{{ url_for('repo.index') }}">&larr; Repo</a></p>
-<h1>{{ package.tag }} <span class="badge status-{{ 'approved' if package.status == 'complete' else package.status }}">{{ package.status }}</span>
+<h1>{{ package.tag }}
+  {% if package.status != 'complete' %}<span class="badge status-{{ package.status }}">{{ package.status }}</span>
+  {% elif package.verified_at %}<span class="badge status-approved">verified</span>
+  {% else %}<span class="badge status-failed">unverified</span>{% endif %}
   {% if package.protected %}<span class="badge">protected</span>{% endif %}</h1>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <table class="resolved-table">
@@ -45,11 +48,11 @@
 <h2>Verify</h2>
 <form class="form-actions" method="post" action="{{ url_for('repo.verify', tag=package.tag) }}">
   <button>Verify all files</button>
-  <span class="muted">Re-reads every file and compares its SHA-256 with package.json (a job). A clean result unlocks the cleanup below.</span>
+  <span class="muted">Starts a run that re-reads every file and compares its SHA-256 with package.json. A clean result unlocks the cleanup.</span>
 </form>
 
 <h2>Cleanup</h2>
-{% include "repo/_cleanup.html" %}
+<p class="muted">Freeing SSD space after packaging is the <a href="{{ url_for('build.index') }}">Cleanup stage on Build</a>; it only offers verified packages.</p>
 
 <h2>Delete</h2>
 <form class="form-actions" method="post" action="{{ url_for('repo.delete', tag=package.tag) }}"
