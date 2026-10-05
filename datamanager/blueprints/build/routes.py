@@ -30,30 +30,31 @@ LAST_CONFIG_COOKIE = "last_config"  # written by the Configure section
 ACTIVE = ("queued", "running")
 RUNS_PER_PAGE = (10, 25, 50, 100)  # choices of the runs overview; the first is the default
 
-# key, title, what it does. Each is runnable on its own once its inputs are approved.
+# key, title, what it does. Each is runnable on its own once its inputs are approved. The order is top down by
+# dependency: a stage only needs stages above it (planet → country PBFs → region PBFs → border/Valhalla → Pelias → tiles → package).
 STAGES = (
     ("download-planet", "Download planet",
      "Fetches the OSM planet (URL in Settings → Download sources) as a new version, unless there is no newer one. "
      "At most the newest two versions are kept. Nothing downstream uses it until you approve the run."),
-    ("extract-countries", "Extract countries",
-     "Cuts every core and overlap country of the configuration out of the approved planet in one pass, with the "
-     "Geofabrik country polygons. Countries already extracted from this planet version are not extracted again."),
     ("download-osm", "Download OSM extracts (Geofabrik)",
      "Alternative to the planet route (Settings → Country PBF source = geofabrik): fetches the Geofabrik extract of every "
      "core and overlap country as a new dated version."),
+    ("extract-countries", "Extract countries",
+     "Cuts every core and overlap country of the configuration out of the approved planet in one pass, with the "
+     "Geofabrik country polygons. Countries already extracted from this planet version are not extracted again."),
     ("polygons", "Region polygons",
      "Derives each region's core, 100 km overlap zone (true distance), the 10 km border zones between "
      "bordering regions and the keep-polygons of carved countries, as .poly files. Needs only the configuration."),
-    ("download-tiles", "Download tiles (Protomaps)",
-     "Fetches the newest daily Protomaps planet build (Z0–15, about 140 GB, Protomaps basemap schema) as a new version, "
-     "unless there is no newer one, and checks its header and layers. Needs no configuration; the newest build "
-     "is kept (Settings → Download sources)."),
-    ("border", "Border crossings",
-     "Outlines every region's country area (core and extended) and finds the motorway to secondary roads that cross "
-     "the border between bordering regions, as one CSV per pair. Needs the approved region PBFs and border polygons."),
+    ("osm-extract", "OSM extract",
+     "Builds each region's core PBF (core countries merged, carved ones clipped) and full PBF (core plus the "
+     "overlap countries clipped to the overlap polygon). Needs the approved country PBFs and approved polygons; "
+     "regions can be built one at a time."),
     ("download-srtm", "Download elevation (SRTM)",
      "Fetches the 1° SRTM tiles every region needs (core and overlap) as versioned downloads and unpacks them for "
      "Valhalla. Tiles that did not change upstream are not fetched again; open-sea tiles do not exist and are skipped."),
+    ("border", "Border crossings",
+     "Outlines every region's country area (core and extended) and finds the motorway to secondary roads that cross "
+     "the border between bordering regions, as one CSV per pair. Needs the approved region PBFs and border polygons."),
     ("valhalla", "Valhalla routing data",
      "Builds each region's routing data (tiles.tar, admin and timezone databases, and the edge polylines Pelias uses) "
      "from its approved full PBF and the approved elevation tiles. Needs Valhalla compiled under Settings → Tools; "
@@ -80,14 +81,14 @@ STAGES = (
      "Builds each region's address interpolation databases (street.db and address.db) with the Pelias interpolation importers "
      "from its approved edge polylines, the OpenAddresses sources and the house numbers of its PBF. Needs no Elasticsearch; "
      "takes hours for a large region. Regions whose inputs did not change are skipped."),
+    ("download-tiles", "Download tiles (Protomaps)",
+     "Fetches the newest daily Protomaps planet build (Z0–15, about 140 GB, Protomaps basemap schema) as a new version, "
+     "unless there is no newer one, and checks its header and layers. Needs no configuration; the newest build "
+     "is kept (Settings → Download sources)."),
     ("styles", "Map styles",
      "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab) as "
      "templates for tilesservice, with a style id/name (Settings) and a version that goes up when the content changes. "
      "Needs only the configuration."),
-    ("osm-extract", "OSM extract",
-     "Builds each region's core PBF (core countries merged, carved ones clipped) and full PBF (core plus the "
-     "overlap countries clipped to the overlap polygon). Needs the approved country PBFs and approved polygons; "
-     "regions can be built one at a time."),
     ("package", "Package",
      "Copies the approved results of this configuration (tiles, routing, Pelias, geodata) into a new, immutable, tagged package in the "
      "package repository (Repo), with the fixed tags date and config plus your own labels. Optionally verifies the copy afterwards. "
