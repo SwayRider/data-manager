@@ -17,6 +17,8 @@ class AppConfig:
     REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:36389/0")
     DATABASE_PATH = os.environ.get("DATABASE_PATH", "./data/state/db.sqlite3")
     DATA_ROOT = os.environ.get("DATA_ROOT", "./data")
+    # The package repository: its own folder (ideally another filesystem, e.g. a ZFS dataset); default under DATA_ROOT
+    PACKAGE_ROOT = os.environ.get("PACKAGE_ROOT", "")
 
     NATURAL_EARTH_URL = os.environ.get(
         "NATURAL_EARTH_URL",
@@ -33,6 +35,10 @@ class AppConfig:
     @property
     def database_uri(self) -> str:
         return f"sqlite:///{Path(self.DATABASE_PATH).resolve()}"
+
+    @property
+    def package_root(self) -> Path:
+        return Path(self.PACKAGE_ROOT) if self.PACKAGE_ROOT else Path(self.DATA_ROOT) / "releases"
 
     @property
     def library_dir(self) -> Path:

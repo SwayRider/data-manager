@@ -71,3 +71,9 @@ class UnresolvedDependencyError(DataManagerError):
     """A stage consumes an asset type that no registered stage produces."""
 
     error_type = "UnresolvedDependencyError"
+
+
+class PackageError(DataManagerError):
+    """Packaging or verifying a package failed (missing input, no space, hash mismatch)."""
+
+    error_type = "PackageError"
