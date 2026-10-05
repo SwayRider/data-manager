@@ -112,3 +112,11 @@ def test_secret_setting_is_saved_hidden_kept_and_removable(client):
 def test_secret_not_echoed_after_validation_error(client):
     response = client.post("/settings/global", data={"pelias.openaddresses_token": "has space", "pelias.es_heap": "bad"}, headers=HX)
     assert response.status_code == 422 and "has space" not in response.get_data(as_text=True)
+
+
+def test_page_shows_package_repository_path(client, monkeypatch):
+    from datamanager.config import config as app_config
+
+    monkeypatch.setattr(app_config, "PACKAGE_ROOT", "/mnt/hdd-pool/swayrider/data-repo")
+    html = client.get("/settings/").get_data(as_text=True)
+    assert "Package repository" in html and "/mnt/hdd-pool/swayrider/data-repo" in html
