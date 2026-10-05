@@ -1,11 +1,11 @@
 {% set summary = run.report_json.get('summary') %}
-<p>{{ summary.styles }} style file(s).
+<p>{{ summary.styles }} style file(s) for style <code>{{ summary.style_id }}</code> “{{ summary.style_label }}”, version <strong>{{ summary.version }}</strong>.
   {% if summary.labels %}Label zoom overrides: {% for k, z in summary.labels.items() %}{{ k }} from {{ z }}{{ ', ' if not loop.last }}{% endfor %}.{% else %}Label zooms: defaults of the base styles.{% endif %}</p>
 {% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
 <table class="resolved-table">
-  <tr><th>File</th><th>Base style</th><th>Layers</th><th>Size</th><th>Tiles URL</th><th>SHA-256</th></tr>
+  <tr><th>File</th><th>Base style</th><th>Layers</th><th>Size</th><th>Sprite</th><th>Fonts</th><th>SHA-256</th></tr>
   {% for s in run.report_json.styles %}
   <tr><td>{{ s.name }}.json</td><td>{{ s.base_style }}</td><td>{{ s.layers }}</td><td>{{ s.bytes|filesize }}</td>
-      <td><code>{{ s.tiles_url }}</code></td><td><code>{{ s.sha256[:16] }}</code></td></tr>
+      <td>{{ s.sprite }}</td><td>{{ s.fonts|join(', ') }}</td><td><code>{{ s.sha256[:16] }}</code></td></tr>
   {% endfor %}
 </table>

@@ -27,7 +27,7 @@ Classes are the unit a deploy config maps to a drive/target. Sources are existin
 
 | Class | Part contents (per region unless noted) | Source asset types / downloads |
 |---|---|---|
-| `tiles` | `tiles.pmtiles`, `styles/…`, `glyphs/…`, `sprites/…`, tiles `manifest.json` (tilesservice contract in `SERVICES.md`) | download version `tiles:planet` (**a download record, not an asset** — see §7), `style` assets; glyphs/sprites: **new** (styles stage growth, §6) |
+| `tiles` | `tiles.pmtiles`, `styles/…`, `glyphs/…`, `sprites/…`, tiles `manifest.json` (tilesservice contract in `SERVICES.md`) | download version `tiles:planet` (**a download record, not an asset** — see §7), `style` assets; glyphs/sprites: vendored in the app (`datamanager/blueprints/configure/static/map-assets`), `manifest.json`: generated at packaging |
 | `valhalla` | `valhalla_tiles.tar` (renamed from `tiles.tar`), `admin.sqlite`, `tz_world.sqlite` | `valhalla-tiles`, `valhalla-admin`, `valhalla-timezones` (`valhalla-polylines` is a pelias input; not shipped *(verify)*) |
 | `pelias` | ES snapshot, `pelias.json`, `wof/` (sqlite dir incl. patched DBs), `interpolation/{street.db,address.db}` | `pelias-index-snapshot`, `pelias-config`, `pelias-wof`, `pelias-interpolation-street-db`, `pelias-interpolation-address-db` |
 | `geodata` | `manifest.yml` (regionservice format, generated at packaging), contour GeoJSON, border-crossing CSVs | `region-outline`, `border-crossings` *(verify mapping of `region-outline` to the legacy contour files regionservice reads)* |
@@ -41,7 +41,7 @@ A package may contain all classes or a subset (`package.json` lists them); a pac
 ```
 <tag>/
   package.json                  manifest (below); written last; its presence = package complete
-  tiles/        tiles.pmtiles, tiles-support.tar (styles+glyphs+sprites), manifest.json
+  tiles/        tiles.pmtiles, manifest.json (generated), styles/<id>/<version>/{light,dark}.json, glyphs/<fontstack>/<range>.pbf, sprites/<name>[@2x].{json,png}  (plain files: the S3 release needs single objects)
   valhalla/<region>/  valhalla_tiles.tar, admin.sqlite, tz_world.sqlite
   pelias/<region>/    <region>.es-snapshot.tar, pelias.json, wof.tar.gz, interpolation/{street.db,address.db}
   geodata/      contours/<region>-{core,extended}.geojson, border-crossings/<a>-<b>.csv   (manifest.yml for regionservice: not generated yet)
@@ -145,7 +145,7 @@ Order is chosen so each step is testable with **fixture packages** (a few KB per
 4. **`deploy/` package** (`datamanager/deploy/`): `base.py` (driver ABC, §3.1), `registry.py`, `compose_single_machine.py` with the `rsync` and `s3` transports (§3.4), `orchestrator.py` (§4). Tests for `s3` against a local fake S3 or Garage in a container. Tests with a **local-path** target in a temp dir (no ssh): transfer/resume (kill mid-copy), hash mismatch, atomic symlink flip (relative), rollback to previous, retention prune, activation hooks mocked (record calls, order), health-check failure → automatic switch-back.
 5. **`/deploy` page:** configurations CRUD with `validate_config`, "plan" preview, run deploy, per-class progress (reuse run/step SSE UI), history, rollback button, current state per class (`describe_state`).
 6. **Server smoke test (the real one):** package a small real build (one tiny region, no planet: tiles part omitted or a small test PMTiles), deploy to a local-path root, then via ssh to dev-mini, `current` flips, activate each class, rollback drill. Only then: planet + all regions.
-7. **Styles stage growth** (needed by the tiles class, can follow after 1–5): named styles with versions, glyphs and sprites, tiles `manifest.json` — see `SERVICES.md` / `TILESSERVICE-PMTILES.md` §styles. Until done, the tiles class can ship only `tiles.pmtiles` + the existing two styles.
+7. **Styles stage growth — built:** the `styles` stage writes template styles (`{{.TilesBaseURL}}`, `{{.Tileset}}`; tiles source `tiles`+`maxzoom 15`, glyph and sprite URLs on tilesservice) with an id and name (Settings → Map style in the tiles release) and an integer version (unchanged content keeps it, a change raises it; per style id). The tiles class packages `styles/<id>/<version>/{light,dark}.json`, the vendored glyphs and sprite sheets, and a generated `manifest.json` (`packages.tiles_manifest`: tileset build/date/schema from the `tiles:planet` run, styles with variants, first = default). One style per configuration for now; several named styles later.
 8. **Tools requirement:** `rsync`/`ssh` already registered as required tools (DESIGN.md); also `sha256sum` on the target (document in dev-mini README).
 Update `DESIGN.md` Phase 3, `CLAUDE.md` and this file's "code state" line when each step lands.
 

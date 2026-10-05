@@ -35,6 +35,7 @@ class SettingDef:
 
 GROUPS = {
     "public": "Public URLs",
+    "styles": "Map style in the tiles release",
     "download": "Download sources",
     "run": "Resources",
     "tool": "Tool versions",
@@ -50,6 +51,9 @@ SETTINGS: tuple[SettingDef, ...] = (
                "url", PUBLIC_GLYPHS, requires=("{fontstack}", "{range}")),
     SettingDef("public.sprite_url", "public", "Sprite URL", "Empty keeps the sprite of the vendored base style.",
                "url", ""),
+    SettingDef("styles.id", "styles", "Style id", "Id of the style in the tiles release (lowercase letters, digits, dashes); part of its URL.",
+               "str", "swayrider", pattern=r"[a-z0-9][a-z0-9-]{0,30}"),
+    SettingDef("styles.label", "styles", "Style name", "Name apps show when the user picks a style.", "str", "SwayRider", pattern=r".{1,60}"),
     SettingDef("download.osm", "download", "OSM extracts", "Base URL for Geofabrik downloads.",
                "url", "https://download.geofabrik.de/"),
     SettingDef("download.planet", "download", "OSM planet",

@@ -11,16 +11,17 @@ from datamanager.services import assets as asset_service
 from datamanager.services import cleanup, downloads, packages
 from datamanager.services import settings as settings_service
 
+STYLE_META = lambda name: {"style_id": "swayrider", "style_label": "SwayRider", "version": 3, "mode": name.removeprefix("style-")}  # noqa: E731
 Env = namedtuple("Env", "session config_id tag repo")
 DATA = lambda rel: Path(app_config.DATA_ROOT) / rel  # noqa: E731
 
 
-def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved", run_id=None):
+def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved", run_id=None, meta=None):
     file = DATA(rel)
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_bytes(content)
     asset = Asset(asset_type=asset_type, name=name, config_profile_id=config_id, path=rel, produced_by_run_id=run_id,
-                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status)
+                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status, meta_json=meta or {})
     session.add(asset)
     session.flush()
     return asset
@@ -59,7 +60,7 @@ def env(db_session, tmp_path, monkeypatch):
                     ("region-outline", "benelux-core", "border/8/benelux-core.geojson"),
                     ("region-outline", "benelux-extended", "border/8/benelux-extended.geojson"),
                     ("style", "style-light", "styles/6/style-light.json"), ("style", "style-dark", "styles/6/style-dark.json")]:
-        _asset(s, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode())
+        _asset(s, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode(), meta=STYLE_META(n) if t == "style" else None)
     # superseded snapshot of an older run, intermediates that no package holds, and user input
     _asset(s, cid, "pelias-index-snapshot", "benelux", f"{a}/pelias/23/benelux/benelux.es-snapshot.tar", b"old-snapshot-23!")
     _asset(s, None, "country-pbf", "belgium", f"{a}/country-pbf/5/belgium.osm.pbf", b"belgium-pbf")

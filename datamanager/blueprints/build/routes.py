@@ -81,8 +81,9 @@ STAGES = (
      "from its approved edge polylines, the OpenAddresses sources and the house numbers of its PBF. Needs no Elasticsearch; "
      "takes hours for a large region. Regions whose inputs did not change are skipped."),
     ("styles", "Map styles",
-     "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab, "
-     "URLs of Settings → Public URLs). Needs only the configuration."),
+     "Writes style-light.json and style-dark.json of the configuration (base styles and label zooms of the Style tab) as "
+     "templates for tilesservice, with a style id/name (Settings) and a version that goes up when the content changes. "
+     "Needs only the configuration."),
     ("osm-extract", "OSM extract",
      "Builds each region's core PBF (core countries merged, carved ones clipped) and full PBF (core plus the "
      "overlap countries clipped to the overlap polygon). Needs the approved country PBFs and approved polygons; "

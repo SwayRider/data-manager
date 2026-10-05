@@ -8,6 +8,7 @@ tile's own `min_zoom` (Protomaps decides per feature, mostly cities ~Z4-6, towns
 """
 
 import copy
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -39,6 +40,12 @@ PLACE_LAYERS = {
 LOCALITY_ID = "places_locality"
 PUBLIC_GLYPHS = "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf"
 PUBLIC_TILES_URL = "pmtiles://https://tiles.example.com/planet.pmtiles"  # placeholder until the deploy URL is set
+# Release styles are Go templates: tilesservice fills in its public URL (`TilesBaseURL`) and the tileset name per request.
+TEMPLATE_BASE = "{{.TilesBaseURL}}"
+RELEASE_TILES = TEMPLATE_BASE + "/{{.Tileset}}/{z}/{x}/{y}"
+RELEASE_GLYPHS = TEMPLATE_BASE + "/fonts/{fontstack}/{range}.pbf"
+RELEASE_MAXZOOM = 15  # the planet PMTiles holds Z0-15; clients over-zoom
+MAP_ASSETS = Path(__file__).resolve().parent.parent / "blueprints" / "configure" / "static" / "map-assets"  # vendored glyphs + sprites
 
 
 def _locality_filters() -> dict[str, list]:
@@ -200,3 +207,46 @@ def config_style(session: Session, config_id: int, mode: str, **urls) -> dict:
     """The patched style of a configuration for `mode` (light|dark)."""
     settings = get_settings(session, config_id)
     return build_style(settings[f"{mode}_style"], settings["labels"], **urls)
+
+
+# --- Release styles (what the tiles package ships) ----------------------------------------------
+
+
+def sprite_flavor(key: str) -> str:
+    """The sprite sheet name of a base style (`light`, `dark`, `white`, ...)."""
+    return load(key)["sprite"].rsplit("/", 1)[-1]
+
+
+def release_style(session: Session, config_id: int, mode: str) -> dict:
+    """The configuration's style for `mode` as a template: tiles, glyphs and sprite come from tilesservice."""
+    settings = get_settings(session, config_id)
+    key = settings[f"{mode}_style"]
+    style = build_style(key, settings["labels"], glyphs=RELEASE_GLYPHS, sprite=f"{TEMPLATE_BASE}/sprites/{sprite_flavor(key)}")
+    source = style["sources"][SOURCE]
+    source.pop("url", None)
+    source.update(tiles=[RELEASE_TILES], minzoom=0, maxzoom=RELEASE_MAXZOOM)
+    return style
+
+
+def font_stacks(style: dict) -> set[str]:
+    """Every font name the style's text layers can ask for (plain lists and `literal` expressions)."""
+    found: set[str] = set()
+
+    def walk(value):
+        if isinstance(value, str):
+            found.add(value)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v)
+
+    for layer in style.get("layers", []):
+        walk(layer.get("layout", {}).get("text-font"))
+    return {f for f in found if f not in ("case", "literal", "<=", "get", "min_zoom") and not f.isdigit()}
+
+
+def vendored_fonts() -> set[str]:
+    return {p.name for p in (MAP_ASSETS / "fonts").iterdir() if p.is_dir()} if (MAP_ASSETS / "fonts").is_dir() else set()
+
+
+def vendored_sprites() -> set[str]:
+    return {p.stem for p in (MAP_ASSETS / "sprites").glob("*.json") if "@" not in p.stem} if (MAP_ASSETS / "sprites").is_dir() else set()
