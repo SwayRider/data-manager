@@ -63,10 +63,12 @@ def mark_running(session: Session, run: BuildRun) -> None:
     session.commit()
 
 
-def finish(session: Session, run: BuildRun, report: dict | None) -> None:
-    run.status = "awaiting_review"
+def finish(session: Session, run: BuildRun, report: dict | None, auto_approve: bool = False) -> None:
+    run.status = "approved" if auto_approve else "awaiting_review"
     run.report_json = report or {}
     run.finished_at = _now()
+    if auto_approve:
+        run.reviewed_at, run.review_note = run.finished_at, "automatic (stage has no review gate)"
     session.commit()
 
 

@@ -43,8 +43,8 @@ A package may contain all classes or a subset (`package.json` lists them); a pac
   package.json                  manifest (below); written last; its presence = package complete
   tiles/        tiles.pmtiles, tiles-support.tar (styles+glyphs+sprites), manifest.json
   valhalla/<region>/  valhalla_tiles.tar, admin.sqlite, tz_world.sqlite
-  pelias/<region>/    snapshot/…, pelias.json, wof.tar, interpolation/{street.db,address.db}
-  geodata/      geodata.tar (manifest.yml, contours, border-crossings)
+  pelias/<region>/    <region>.es-snapshot.tar, pelias.json, wof.tar.gz, interpolation/{street.db,address.db}
+  geodata/      contours/<region>-{core,extended}.geojson, border-crossings/<a>-<b>.csv   (manifest.yml for regionservice: not generated yet)
 ```
 
 ### 2.3 `package.json` (schema 1)
@@ -184,3 +184,9 @@ Purpose: keep the SSD (`DATA_ROOT`) small once a package holds the results. Afte
 | — | Natural Earth, country geometry, autofill, `.poly` files (16) and `tools/` (17) | | **not in the dialog; never touched** |
 
 Rules: never delete a pinned or in-use (running/queued) download or asset, nor the versions that `*_keep` protects; deleting an approved asset marks the row `purged` (file gone; row, hashes and `source_download_ids` stay for traceability); stage status and fingerprints treat `purged` as "packaged in `<tag>`, rebuild on demand", not as "outdated" or failed; a stage whose input is purged refuses to start with a hint to rebuild the upstream stage. Sizes on 2026-10-05 (for orientation): downloads 252 G, library 594 G of which Pelias snapshots 454 G.
+
+## 9. Implementation notes (as built, 2026-10-05)
+- `services/packages.py` (`plan`, `create_package`, `verify_package`, `edit_labels`, `delete`, `prune`, `reindex`), tables `package`/`package_item`/`package_label` (migration 0019), `PACKAGE_ROOT`.
+- Stage `package` (`stages/package.py`, `review_gate = False`: a clean run is `approved` automatically, note "automatic"); params `classes`, `labels`, `note`, `force`. Without `force` the plan is refused while a stage behind a chosen class is `outdated`, `review` or `running` (`CLASS_STAGES` in `services/packages.py`).
+- CLI: `flask package-create --config NAME [--classes ..] [--label k=v] [--note ..] [--force] [--inline]`, `package-list`, `package-verify TAG`, `packages-reindex`, `packages-prune [--keep N] [--apply]` (setting `package.keep`, default 3).
+- `package.json` carries `tool_versions` (valhalla tag, elasticsearch version, pelias ref, pelias `PLAN_VERSION`) next to the automatic tags.

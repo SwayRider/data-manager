@@ -38,6 +38,7 @@ GROUPS = {
     "run": "Resources",
     "tool": "Tool versions",
     "pelias": "Pelias",
+    "package": "Package repository",
 }
 
 SETTINGS: tuple[SettingDef, ...] = (
@@ -63,6 +64,8 @@ SETTINGS: tuple[SettingDef, ...] = (
                "url", "https://build.protomaps.com/"),
     SettingDef("download.tiles_keep", "download", "Tile builds kept", "How many full Protomaps planet builds are kept on disk.",
                "int", 1, min=1, max=3),
+    SettingDef("package.keep", "package", "Packages kept", "How many unprotected packages `packages-prune` keeps (newest first).",
+               "int", 3, min=1, max=50),
     SettingDef("download.connections", "download", "Parallel connections", "Parallel Range segments used for large downloads.",
                "int", 4, min=1, max=8),
     SettingDef("download.country_polys", "download", "Country polygons", "Base URL of the per-country .poly files (a few kB each) used to cut countries from the planet.",

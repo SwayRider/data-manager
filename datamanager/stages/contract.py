@@ -43,6 +43,7 @@ class StageRunner(ABC):
     produces: tuple[StageIO, ...] = ()
     consumes: tuple[StageIO, ...] = ()
     consumes_downloads: tuple[str, ...] = ()
+    review_gate: bool = True  # False: a clean run is approved automatically (e.g. packaging: nothing downstream consumes it)
 
     @abstractmethod
     def run(self, context: StageRunContext) -> StageResult: ...

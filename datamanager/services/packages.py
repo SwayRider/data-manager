@@ -41,6 +41,10 @@ REGION_PARTS = {
         ("pelias-interpolation-address-db", "{region}/interpolation/address.db"),
     ],
 }
+# class -> the stages whose output it packages; a package is refused while one of them is not settled
+CLASS_STAGES = {"tiles": ("download-tiles", "styles"), "valhalla": ("valhalla",),
+                "pelias": ("pelias", "pelias-interpolation"), "geodata": ("border",)}
+UNSETTLED = {"outdated", "review", "running"}
 ProgressCb = Callable[[int, int, str], None]
 
 
@@ -96,7 +100,7 @@ def _asset_item(session: Session, config_id: int, class_: str, region: str | Non
                     asset_id=asset.id, meta={"asset_type": asset_type, "name": name, "run_id": asset.produced_by_run_id})
 
 
-def plan(session: Session, config_id: int, classes: list[str] | None = None) -> Plan:
+def plan(session: Session, config_id: int, classes: list[str] | None = None, check_status: bool = False) -> Plan:
     """What a package of this configuration would contain, and what blocks it. Nothing is copied."""
     classes = list(classes or CLASSES)
     unknown = [c for c in classes if c not in CLASSES]
@@ -153,7 +157,34 @@ def plan(session: Session, config_id: int, classes: list[str] | None = None) -> 
                 item = _asset_item(session, config_id, class_, None, "style", name, f"styles/{name}.json", problems)
                 if item:
                     items.append(item)
+    if check_status:
+        problems += _unsettled(session, config_id, resolved, classes)
     return Plan(items, problems, regions, {r.name.lower(): r.hash for r in resolved.regions})
+
+
+def _unsettled(session: Session, config_id: int, resolved, classes: list[str]) -> list[str]:
+    """Stages behind the chosen classes that are outdated, waiting for review or running: packaging them would
+    freeze a stale or unapproved state. `force` skips this check."""
+    from datamanager.stages import status as stage_status  # local: the stages import the services
+
+    states = stage_status.compute(session, config_id, resolve.to_dict(resolved), {})
+    found = []
+    for class_ in classes:
+        for key in CLASS_STAGES.get(class_, ()):
+            state = states.get(key)
+            if state is not None and state.state in UNSETTLED:
+                found.append(f"{class_}: stage {key} is {state.state} ({state.detail})")
+    return found
+
+
+def tool_versions(session: Session) -> dict:
+    from datamanager.services import settings as settings_service
+    from datamanager.stages.pelias import PLAN_VERSION as PELIAS_PLAN_VERSION
+
+    return {"valhalla": settings_service.get(session, "tool.valhalla_tag"),
+            "elasticsearch": settings_service.get(session, "tool.elasticsearch_version"),
+            "pelias_ref": settings_service.get(session, "tool.pelias_ref"),
+            "pelias_plan_version": PELIAS_PLAN_VERSION}
 
 
 # ---- creating ---------------------------------------------------------------------------------------------------
@@ -187,9 +218,10 @@ def _sha256_of(path: Path) -> str:
 
 def create_package(session: Session, config_id: int, classes: list[str] | None = None, *, created_by: str = "operator",
                    labels: dict[str, str] | None = None, note: str = "", run_id: int | None = None,
-                   progress: ProgressCb | None = None, step: Callable[[str], None] | None = None) -> Package:
+                   progress: ProgressCb | None = None, step: Callable[[str], None] | None = None,
+                   check_status: bool = False) -> Package:
     """Copy the approved inputs into `PACKAGE_ROOT/<tag>/`, hash them, write `package.json` last."""
-    the_plan = plan(session, config_id, classes)
+    the_plan = plan(session, config_id, classes, check_status=check_status)
     if the_plan.problems:
         raise PackageError("Cannot package: " + "; ".join(the_plan.problems), problems=the_plan.problems)
     if not the_plan.items:
@@ -229,12 +261,13 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
                               "source": {k: v for k, v in (("asset_id", item.asset_id), ("download_id", item.download_id)) if v},
                               "meta": item.meta})
         created_at = _utcnow()
-        tags = _auto_tags(config_row, the_plan, parts, created_by, created_at)
+        versions = tool_versions(session)
+        tags = _auto_tags(config_row, the_plan, parts, created_by, created_at, versions)
         document = {
             "schema": SCHEMA, "tag": tag, "created_at": created_at.isoformat() + "Z", "created_by": created_by,
             "config": {"name": config_row.name if config_row else None, "id": config_id,
                        "resolved_hashes": the_plan.resolved_hashes},
-            "regions": the_plan.regions, "tags": tags,
+            "regions": the_plan.regions, "tool_versions": versions, "tags": tags,
             "classes": {c: {"parts": [p for p in parts if p["class"] == c]} for c in dict.fromkeys(p["class"] for p in parts)},
         }
         body = json.dumps(document, indent=2, sort_keys=True).encode()
@@ -258,7 +291,8 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     return package
 
 
-def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, created_at: datetime.datetime) -> dict:
+def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, created_at: datetime.datetime,
+               versions: dict) -> dict:
     tags = {
         "config": config_row.name if config_row else "",
         "regions": ",".join(the_plan.regions),
@@ -266,6 +300,8 @@ def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, c
         "created": f"{created_at:%Y-%m-%d}",
         "created_by": created_by,
     }
+    for name, value in versions.items():
+        tags[f"tool.{name}"] = str(value)
     for region, digest in the_plan.resolved_hashes.items():
         tags[f"resolved_hash.{region}"] = digest[:16]
     runs = sorted({p["meta"]["run_id"] for p in parts if p["meta"].get("run_id")})
