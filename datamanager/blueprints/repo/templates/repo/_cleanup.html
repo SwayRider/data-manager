@@ -27,9 +27,11 @@
     {% endfor %}
     <tr><th></th><th>Selected</th><th>{{ selected_count }}</th><th>{{ selected_bytes|filesize }}</th><th></th></tr>
   </table>
+  <div class="form-actions">
   <button hx-post="{{ url_for('repo.cleanup_preview', tag=package.tag) }}" hx-target="#cleanup-box" hx-swap="outerHTML">Update total</button>
   <button class="danger" hx-post="{{ url_for('repo.cleanup_apply', tag=package.tag) }}" hx-target="#cleanup-box" hx-swap="outerHTML"
           hx-confirm="Remove the selected files from the SSD? Packaged results stay in {{ package.tag }}." {{ 'disabled' if busy }}>Clean up selected</button>
+  </div>
 </form>
 {% endif %}
 </div>

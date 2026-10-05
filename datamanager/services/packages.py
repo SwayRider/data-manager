@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -25,6 +26,7 @@ CLASSES = ("tiles", "valhalla", "pelias", "geodata")
 SCHEMA = 1
 CHUNK = 8 * 1024 * 1024
 FREE_SPACE_FACTOR = 1.05
+PROGRESS_EVERY = 1.0  # seconds between progress updates (every one is a DB commit)
 
 # class -> [(asset type, destination relative to the class folder; `{region}` is filled in)] for per-region assets
 REGION_PARTS = {
@@ -189,6 +191,22 @@ def tool_versions(session: Session) -> dict:
 
 # ---- creating ---------------------------------------------------------------------------------------------------
 
+# Tags the package writes itself: users can add labels but never set or overwrite these keys.
+RESERVED_KEYS = {"date", "config", "regions", "classes", "created_by", "source_runs", "tiles_build"}
+RESERVED_PREFIXES = ("tool.", "resolved_hash.")
+
+
+def default_tags(config_name: str, moment: datetime.datetime | None = None) -> dict:
+    """The tags every package carries and that the form shows up front: date (UTC) and configuration."""
+    return {"date": f"{moment or _utcnow():%Y-%m-%d}", "config": config_name}
+
+
+def check_labels(labels: dict[str, str]) -> None:
+    bad = sorted(k for k in labels if k in RESERVED_KEYS or k.startswith(RESERVED_PREFIXES))
+    if bad:
+        raise PackageError(f"Reserved tag(s) cannot be set as labels: {', '.join(bad)}", reserved=bad)
+
+
 def _next_tag(session: Session) -> str:
     prefix = f"r-{_utcnow():%Y%m%d}-"
     taken = {t for (t,) in session.query(Package.tag).filter(Package.tag.like(prefix + "%"))}
@@ -221,6 +239,7 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
                    progress: ProgressCb | None = None, step: Callable[[str], None] | None = None,
                    check_status: bool = False) -> Package:
     """Copy the approved inputs into `PACKAGE_ROOT/<tag>/`, hash them, write `package.json` last."""
+    check_labels(labels or {})
     the_plan = plan(session, config_id, classes, check_status=check_status)
     if the_plan.problems:
         raise PackageError("Cannot package: " + "; ".join(the_plan.problems), problems=the_plan.problems)
@@ -241,7 +260,7 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     session.add(package)
     session.commit()
 
-    done = 0
+    done, last = 0, 0.0
     parts: list[dict] = []
     try:
         for class_ in dict.fromkeys(i.class_ for i in the_plan.items):
@@ -249,10 +268,11 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
                 step(f"Copy {class_}")
             for item in (i for i in the_plan.items if i.class_ == class_):
                 def on_bytes(n: int, name=item.rel_path):
-                    nonlocal done
+                    nonlocal done, last
                     done += n
-                    if progress:
-                        progress(done, total, name)
+                    if progress and (time.monotonic() - last >= PROGRESS_EVERY or done == total):
+                        last = time.monotonic()
+                        progress(done, total, f"{name} · {done / 1e9:.1f} / {total / 1e9:.1f} GB")
                 sha = _copy_hash(item.source, partial / item.rel_path, on_bytes)
                 if item.expected_sha and sha != item.expected_sha:
                     raise PackageError(f"{item.rel_path}: source changed on disk (hash {sha[:12]} != recorded {item.expected_sha[:12]})")
@@ -294,10 +314,9 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
 def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, created_at: datetime.datetime,
                versions: dict) -> dict:
     tags = {
-        "config": config_row.name if config_row else "",
+        **default_tags(config_row.name if config_row else "", created_at),
         "regions": ",".join(the_plan.regions),
         "classes": ",".join(dict.fromkeys(p["class"] for p in parts)),
-        "created": f"{created_at:%Y-%m-%d}",
         "created_by": created_by,
     }
     for name, value in versions.items():
@@ -353,6 +372,7 @@ def edit_labels(session: Session, tag: str, labels: dict[str, str] | None = None
                 protected: bool | None = None) -> Package:
     package = get(session, tag)
     if labels is not None:
+        check_labels(labels)
         session.query(PackageLabel).filter_by(package_id=package.id, origin="user").delete(synchronize_session="fetch")
         for key, value in labels.items():
             session.add(PackageLabel(package_id=package.id, key=key, value=value, origin="user"))
@@ -390,7 +410,7 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
             problems.append(f"{rel}: hash mismatch")
         done += part["size"]
         if progress:
-            progress(done, total, rel)
+            progress(done, total, f"{rel} · {done / 1e9:.1f} / {total / 1e9:.1f} GB")
     on_disk = {str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file()} - {"package.json", "labels.json"}
     problems += [f"{rel}: not listed in package.json" for rel in sorted(on_disk - set(listed))]
     package.verified_at = None if problems else _utcnow()  # the cleanup only follows a clean verify

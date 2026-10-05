@@ -7,9 +7,16 @@ from flask import Blueprint, abort, redirect, render_template, request, url_for
 from datamanager.config import config
 from datamanager.db import SessionLocal
 from datamanager.errors import DataManagerError, PackageError
-from datamanager.models import ConfigProfile, Package
+from datamanager.models import BuildRun, ConfigProfile, Package
 from datamanager.services import cleanup, packages, runs
 from datamanager.services.cleanup_categories import CATEGORIES
+
+CLASS_HELP = {
+    "tiles": "Protomaps planet PMTiles and the map styles",
+    "valhalla": "Routing tiles, admin and timezone databases per region",
+    "pelias": "Elasticsearch snapshot, pelias.json, WOF and interpolation databases per region",
+    "geodata": "Region outlines and border crossings",
+}
 
 bp = Blueprint(
     "repo", __name__, url_prefix="/repo", template_folder="templates"
@@ -62,6 +69,14 @@ def _parse_labels(text: str) -> dict[str, str]:
     return labels
 
 
+def _fixed_tags() -> dict:
+    """The tags the package will carry whatever the user types: today's date and the selected configuration."""
+    session = SessionLocal()
+    config_id = request.form.get("config", type=int) or request.args.get("config", type=int)
+    cfg = session.get(ConfigProfile, config_id) if config_id else session.query(ConfigProfile).order_by(ConfigProfile.name).first()
+    return packages.default_tags(cfg.name if cfg else "-")
+
+
 def _form_plan():
     """The package the new-package form describes: (config id, classes, labels, note, force) and its plan."""
     session = SessionLocal()
@@ -70,6 +85,10 @@ def _form_plan():
         return None, None, "Choose a configuration."
     classes = [c for c in request.form.getlist("classes") if c in packages.CLASSES] or list(packages.CLASSES)
     force = bool(request.form.get("force"))
+    try:
+        packages.check_labels(_parse_labels(request.form.get("labels", "")))
+    except PackageError as exc:
+        return None, None, exc.message
     try:
         the_plan = packages.plan(session, config_id, classes, check_status=not force)
     except DataManagerError as exc:
@@ -94,8 +113,11 @@ def _index_context(**extra):
         cfg = session.get(ConfigProfile, package.config_profile_id) if package.config_profile_id else None
         rows.append({"p": package, "classes": classes, "config": cfg.name if cfg else "-",
                      "user_labels": [l for l in package.labels if l.origin == "user"]})
-    return {"repo": _repo_status(), "rows": rows, "configs": session.query(ConfigProfile).order_by(ConfigProfile.name).all(),
-            "classes": packages.CLASSES, "filters": {"config": config_id, "label": request.args.get("label", ""), "class": klass},
+    recent = (session.query(BuildRun).filter(BuildRun.stage_key.in_(("package", "package-verify")))
+              .order_by(BuildRun.id.desc()).limit(10).all())
+    first = session.query(ConfigProfile).order_by(ConfigProfile.name).first()
+    return {"repo": _repo_status(), "fixed": packages.default_tags(first.name if first else "-"), "recent_runs": recent, "rows": rows, "configs": session.query(ConfigProfile).order_by(ConfigProfile.name).all(),
+            "classes": packages.CLASSES, "class_help": CLASS_HELP, "filters": {"config": config_id, "label": request.args.get("label", ""), "class": klass},
             "keep": packages.settings_keep(session), **extra}
 
 
@@ -107,14 +129,14 @@ def index():
 @bp.post("/plan")
 def plan_preview():
     chosen, the_plan, error = _form_plan()
-    return render_template("repo/_plan.html", plan=the_plan, error=error, free=_repo_status().get("free"))
+    return render_template("repo/_plan.html", plan=the_plan, error=error, free=_repo_status().get("free"), fixed=_fixed_tags())
 
 
 @bp.post("/create")
 def create():
     chosen, the_plan, error = _form_plan()
     if error or the_plan.problems:
-        return render_template("repo/_plan.html", plan=the_plan, error=error, free=_repo_status().get("free")), 422
+        return render_template("repo/_plan.html", plan=the_plan, error=error, free=_repo_status().get("free"), fixed=_fixed_tags()), 422
     config_id, classes, force = chosen
     from datamanager.blueprints.build.routes import enqueue_run
 
@@ -153,8 +175,12 @@ def detail(tag: str):
 @bp.post("/<tag>/labels")
 def labels(tag: str):
     package = _package_or_404(tag)
-    packages.edit_labels(SessionLocal(), tag, labels=_parse_labels(request.form.get("labels", "")),
-                         note=request.form.get("note", ""), protected=bool(request.form.get("protected")))
+    try:
+        packages.edit_labels(SessionLocal(), tag, labels=_parse_labels(request.form.get("labels", "")),
+                             note=request.form.get("note", ""), protected=bool(request.form.get("protected")))
+    except PackageError as exc:
+        SessionLocal().rollback()
+        return render_template("repo/detail.html", **_detail_context(package, error=exc.message, **_cleanup_context(package, None))), 422
     return redirect(url_for("repo.detail", tag=package.tag), code=303)
 
 

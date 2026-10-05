@@ -15,12 +15,14 @@
 </table>
 
 <h2>Labels</h2>
-<form class="add-region" method="post" action="{{ url_for('repo.labels', tag=package.tag) }}">
-  <label>Labels <textarea name="labels" rows="3" cols="30" placeholder="candidate&#10;live=dev-mini">{% for l in user %}{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}
+<form class="stacked-form" method="post" action="{{ url_for('repo.labels', tag=package.tag) }}">
+  <label class="field"><span>Extra labels <span class="hint">one per line: <code>key=value</code> or a bare label; the tags below are fixed</span></span>
+    <textarea name="labels" rows="3" placeholder="candidate&#10;live=dev-mini">{% for l in user %}{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}
 {% endfor %}</textarea></label>
-  <label>Note <input name="note" value="{{ package.note }}" maxlength="500" size="40"></label>
-  <label><input type="checkbox" name="protected" value="1" {{ 'checked' if package.protected }}> Protected (never pruned or deleted)</label>
-  <button>Save</button>
+  <label class="field"><span>Note</span><input type="text" name="note" value="{{ package.note }}" maxlength="500"></label>
+  <div class="check-list"><label><input type="checkbox" name="protected" value="1" {{ 'checked' if package.protected }}>
+    <span>Protected <span class="hint">never pruned or deleted</span></span></label></div>
+  <div class="form-actions"><button class="primary">Save</button></div>
 </form>
 <h3>Tags written at packaging time</h3>
 <table class="resolved-table">
@@ -41,7 +43,7 @@
 {% endfor %}
 
 <h2>Verify</h2>
-<form class="add-region" method="post" action="{{ url_for('repo.verify', tag=package.tag) }}">
+<form class="form-actions" method="post" action="{{ url_for('repo.verify', tag=package.tag) }}">
   <button>Verify all files</button>
   <span class="muted">Re-reads every file and compares its SHA-256 with package.json (a job). A clean result unlocks the cleanup below.</span>
 </form>
@@ -50,7 +52,7 @@
 {% include "repo/_cleanup.html" %}
 
 <h2>Delete</h2>
-<form class="add-region" method="post" action="{{ url_for('repo.delete', tag=package.tag) }}"
+<form class="form-actions" method="post" action="{{ url_for('repo.delete', tag=package.tag) }}"
       onsubmit="return confirm('Delete {{ package.tag }} and its files from the repository?')">
   <button class="danger" {{ 'disabled' if package.protected }}>Delete package</button>
   {% if package.protected %}<span class="muted">Protected: remove the protection first.</span>{% endif %}

@@ -104,3 +104,64 @@ def test_cleanup_box_after_verify(client, package):
     SessionLocal().commit()
     blocked = client.post(f"/repo/{package.tag}/cleanup/apply", data={"category": ["valhalla"]}).get_data(as_text=True)
     assert "queued or running" in blocked
+
+
+def test_fixed_tags_are_shown_and_follow_the_selected_configuration(client, cfg):
+    import datetime
+
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+    html = client.get("/repo/").get_data(as_text=True)
+    assert f"date={today}" in html and "config=dev-mini" in html and "cannot be changed" in html
+    preview = client.post("/repo/plan", data={"config": cfg.id, "classes": ["valhalla"]}).get_data(as_text=True)
+    assert 'hx-swap-oob="true"' in preview and f"date={today}" in preview and "config=dev-mini" in preview
+
+
+def test_reserved_tags_cannot_be_set_as_labels(client, cfg, package):
+    for labels in ("config=other", "date=2020-01-01", "tool.valhalla=x", "resolved_hash.benelux=1"):
+        plan = client.post("/repo/plan", data={"config": cfg.id, "classes": ["valhalla"], "labels": labels}).get_data(as_text=True)
+        assert "Reserved tag" in plan
+        assert client.post("/repo/create", data={"config": cfg.id, "classes": ["valhalla"], "labels": labels}).status_code == 422
+    assert SessionLocal().query(BuildRun).count() == 0
+    edited = client.post(f"/repo/{package.tag}/labels", data={"labels": "config=other"})
+    assert edited.status_code == 422 and "Reserved tag" in edited.get_data(as_text=True)
+    keep = {(l.key, l.value, l.origin) for l in SessionLocal().query(Package).one().labels}
+    assert ("config", "dev-mini", "auto") in keep and ("candidate", "", "user") in keep  # untouched
+    extra = client.post(f"/repo/{package.tag}/labels", data={"labels": "for=q4\ncandidate"})
+    assert extra.status_code == 303
+
+
+def test_created_package_carries_date_and_config_tags(package):
+    import datetime
+
+    tags = {l.key: l.value for l in SessionLocal().query(Package).one().labels if l.origin == "auto"}
+    assert tags["config"] == "dev-mini" and tags["date"] == datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+    assert "created" not in tags
+
+
+def test_package_run_page_shows_progress_report_and_recent_runs(client, cfg):
+    import datamanager.services.packages as pk
+    from datamanager.jobs import tasks
+    from datamanager.services import runs
+
+    session = SessionLocal()
+    run = runs.create_run(session, "package", cfg.id, params={"classes": ["valhalla"], "labels": {"for": "q4"}, "force": True})
+    tasks.run_stage(run.id)
+    page = client.get(f"/build/runs/{run.id}").get_data(as_text=True)
+    assert "Copy valhalla" in page and "<progress" in page and "GB" in page
+    tag = SessionLocal().query(Package).one().tag
+    assert f"/repo/{tag}" in page and "date=" in page and "config=dev-mini" in page
+    index = client.get("/repo/").get_data(as_text=True)
+    assert "Recent runs" in index and f"run {run.id}" in index and "create package" in index
+    verify = runs.create_run(session, "package-verify", cfg.id, params={"tag": tag})
+    tasks.run_stage(verify.id)
+    assert "match their SHA-256" in client.get(f"/build/runs/{verify.id}").get_data(as_text=True)
+
+
+def test_progress_updates_are_throttled(cfg, monkeypatch):
+    import datamanager.services.packages as pk
+
+    monkeypatch.setattr(pk, "CHUNK", 4)
+    calls = []
+    pk.create_package(SessionLocal(), cfg.id, ["valhalla"], progress=lambda d, t, m: calls.append((d, t)))
+    assert calls and calls[-1][0] == calls[-1][1]  # the final update always arrives
+    assert len(calls) <= 4  # three tiny files, many 4-byte chunks, but at most one update per second

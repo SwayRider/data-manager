@@ -136,3 +136,24 @@ a.stage-dot { text-decoration: none; cursor: pointer; }
 a.stage-dot:hover { filter: brightness(1.15); box-shadow: 0 0 0 2px var(--border); }
 .runs-pager { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: .5rem; }
 .runs-pager label.inline { display: inline-flex; align-items: center; gap: .4rem; margin: 0 0 0 auto; }
+
+/* stacked forms (Repo): one field per row, checkbox lists one option per line */
+.stacked-form { display: grid; gap: 1rem; max-width: 44rem; }
+.stacked-form label.field { display: grid; gap: .25rem; margin: 0; }
+.stacked-form label.field > span, .stacked-form legend { font-weight: 600; }
+.stacked-form input[type=text], .stacked-form input:not([type]), .stacked-form select, .stacked-form textarea { width: 100%; box-sizing: border-box; }
+.stacked-form textarea { resize: vertical; }
+.stacked-form fieldset { border: 1px solid var(--border); border-radius: 6px; margin: 0; padding: .4rem .9rem .7rem; }
+.stacked-form .hint { color: var(--muted); font-size: .85rem; font-weight: normal; }
+.check-list { display: grid; gap: .45rem; margin-top: .4rem; }
+.check-list label { display: grid; grid-template-columns: auto 1fr; column-gap: .55rem; align-items: baseline; margin: 0; }
+.check-list label .hint { grid-column: 2; margin-top: -.1rem; }
+.form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.filter-bar { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem 1rem; margin-bottom: 1rem; }
+.filter-bar label { display: grid; gap: .2rem; margin: 0; }
+.plan-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--panel); padding: .6rem 1rem .8rem; }
+.plan-panel table { margin-bottom: .5rem; }
+.repo-section { margin-bottom: 2rem; }
+.tag-chips { display: flex; flex-wrap: wrap; gap: .4rem; }
+.tag-chip { padding: .15rem .55rem; border: 1px solid var(--border); border-radius: 999px; background: var(--panel); }
+.stacked-form .field-title { font-weight: 600; }
