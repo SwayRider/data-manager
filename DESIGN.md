@@ -1,6 +1,8 @@
 # `data-manager`: Redesign of the SwayRider Data Pipeline
 
 > **Decision 2026-10-05 (deployment):** deployment is **copy-based**, not a local symlink only. Releases are assembled under `releases/<id>/<class>/` with a hash `manifest.json` and copied (rsync/ssh, verified) to the target, where a per-class `current` symlink is switched atomically and a class-specific activation runs. This supersedes the `LocalDeployTarget`-first wording below: the deploy side is now modelled as package + deploy configuration (driver `compose-single-machine`, local or ssh) = deploy; see [`RELEASE-CONTRACT.md`](RELEASE-CONTRACT.md), which supersedes the `deployment_target`/`LocalDeployTarget` wording and the `assembly`/`publish_record` tables below. Layout and procedure: [`../Docs/MIGRATION-DATA-MANAGER.md`](../Docs/MIGRATION-DATA-MANAGER.md) §3.
+>
+> **Decision 2026-10-05 (package repository and cleanup):** packages live in their own folder `PACKAGE_ROOT` (env, a separate ZFS dataset on this machine, not under `DATA_ROOT`) and are always real copies (no hard links across filesystems), copied and sha256-hashed in one pass; each package has automatic tags (configuration, resolved hashes, dates, tool versions, source runs) frozen in `package.json` plus mutable user labels, and the folder can be re-indexed into the DB. After packaging, a cleanup dialog removes build files per category with user-set defaults (`RELEASE-CONTRACT.md` §2.2, §2.4, §8).
 
 ## Context
 
