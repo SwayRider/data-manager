@@ -5,6 +5,8 @@ from this machine** (CLAUDE.md → Workflow): the changes are implemented on the
 derived from their code (tilesservice `642cb8a`, swayrider-api `b1f9ad3`, read on 2026-10-05); the full analysis, file/line references, code sketches, tests and the ordered
 list of pull requests are in **`TILESSERVICE-PMTILES.md`**, which is the handover document for that work. Items marked *(verify)* were not checked against code.
 
+> Cross-service ordering, the dev-mini deployment layout and the per-artifact copy/activate procedure are in [`../Docs/MIGRATION-DATA-MANAGER.md`](../Docs/MIGRATION-DATA-MANAGER.md). Deployment is **copy-based** (data-manager may run on another host than the target; artifact classes may sit on different drives), (package/deploy model: [`RELEASE-CONTRACT.md`](RELEASE-CONTRACT.md)), so the target mounts a per-class root (`TILES_ROOT`, `VALHALLA_ROOT`, `PELIAS_ROOT`, `GEODATA_ROOT`) containing `releases/<id>/` and a `current` symlink.
+
 ## tilesservice — one Protomaps PMTiles tileset and the map styles
 
 **Why:** data-manager's tiles stage no longer builds tiles. It downloads the Protomaps daily **planet** build (`download-tiles`, ~140 GB, Protomaps basemap schema, Z0–15) and the
