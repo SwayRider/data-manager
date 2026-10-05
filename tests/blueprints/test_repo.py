@@ -127,7 +127,8 @@ def test_progress_covers_all_files_of_a_copy_step(cfg, monkeypatch):
     assert {c[1] for c in calls} == {total}  # one step (valhalla): the bar total is all its files together
     done = [c[0] for c in calls]
     assert done == sorted(done) and done[-1] == total  # monotonic over the files, ends at the step total
-    assert any("file 1/3" in c[2] for c in calls) and any("file 3/3" in c[2] for c in calls) and all("step " in c[2] for c in calls)
+    assert any("file 1/3" in c[2] for c in calls) and any("file 3/3" in c[2] for c in calls)
+    assert calls[-1][2].startswith(f"{pk._human(total)} / {pk._human(total)} · file 3/3")  # the numbers are the step's, not the file's
     verify_calls = []
     pk.verify_package(SessionLocal(), package.tag, progress=lambda d, t, m: verify_calls.append((d, t, m)))
     assert {c[1] for c in verify_calls} == {total} and verify_calls[-1][0] == total and "file 3/3" in verify_calls[-1][2]

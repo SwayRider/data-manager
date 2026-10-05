@@ -241,9 +241,8 @@ def _human(n: float) -> str:
 
 
 def _message(name: str, file_done: int, file_size: int, index: int, count: int, step_done: int, step_total: int) -> str:
-    """Progress line: the current file and how much of it is done; the bar itself covers all files of the step."""
-    return (f"{name} · {_human(file_done)} / {_human(file_size)} · file {index}/{count} · "
-            f"step {_human(step_done)} / {_human(step_total)}")
+    """Progress line: bytes done of all files of the step (the same numbers the bar shows), then the current file."""
+    return f"{_human(step_done)} / {_human(step_total)} · file {index}/{count}: {name}"
 
 
 def _sha256_progress(path: Path, on_bytes: Callable[[int], None]) -> str:
