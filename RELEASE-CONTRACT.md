@@ -105,7 +105,22 @@ Activation per class: tiles = SIGHUP/poll of the symlink (no restart; tilesservi
 
 State truth is on the **target** (`current` symlinks); `deploy-state/<config key>/state.json` is only a cache refreshed by `describe_state`.
 
-### 3.3 Later drivers
+### 3.3 `s3` transport of the `compose-single-machine` driver (tiles class; decision 2026-10-05)
+A class target may set `transport: "s3"` instead of the default `rsync`; first use is the `tiles` class, whose release lives in the Garage bucket (`../Docs/MIGRATION-DATA-MANAGER.md` §3.1a).
+```json
+"tiles": {"transport": "s3", "endpoint": "https://s3.dev-mini.example", "region": "garage", "bucket": "swayrider-tiles",
+          "credentials": {"access_key_env": "DM_S3_ACCESS_KEY", "secret_key_env": "DM_S3_SECRET_KEY"},
+          "keep_releases": 2, "ready_url": "http://tilesservice.internal/v1/tiles/ready"}
+```
+- `transfer`: upload `releases/<tag>/…` objects (multipart for large parts; resumable by skipping objects whose size and recorded checksum already match); the object key layout is the tiles contract in `SERVICES.md`.
+- `verify`: size plus checksum (S3 additional SHA-256 where the store supports it, else a `sha256` object metadata value written at upload; optional full read-back, same cost trade-off as §7.6).
+- `finalize`: write `current.json` **last** (single PUT = atomic switch); keep the previous pointer value for rollback.
+- `activate`: none; `tilesservice` polls the pointer. Health check: the service's readiness endpoint reports the new release id within a timeout, otherwise the pointer is written back (automatic rollback).
+- Retention: delete `releases/<old>/` prefixes beyond `keep_releases`, never the current or previous.
+- Credentials come from the environment of the data-manager process, never from the package or the stored configuration; the key needs write access to this bucket only.
+- Rollback: deploy the previous tag (objects are usually still there; the transfer step then skips everything and only rewrites the pointer).
+
+### 3.4 Later drivers
 Anything that can map the same package parts onto its own storage and activation (e.g. k8s: PVC/object-store upload + rollout restart). Out of scope now; the interface in §3.1 must not assume symlinks or rsync.
 
 ## 4. Deploy (record and semantics)
@@ -124,7 +139,7 @@ Order is chosen so each step is testable with **fixture packages** (a few KB per
 1. **Alembic migration 0019:** `package`, `package_item`, `deploy_config`, `deployment`; no change to existing tables. (`package_item(package_id, class, region, path, kind, size, sha256, asset_id?, download_id?, meta_json)`.)
 2. **`services/packages.py`:** collect approved assets per class (reuse `assets.current` per config/type/region), consistency checks, hard-link/copy into `releases/<tag>/`, hash, write `package.json` last; `verify_package`; delete/protect/retention; extend cleanup protection ("referenced by a package") in `services/downloads.py` and `services/assets.py`. Tag counter. Tests: fixture assets → package; tamper → verify fails; incomplete → refused; unapproved → refused.
 3. **Packaging job:** stage-like `package` runner (RQ, `step_cb` progress), registered in `stages/builtin.py`; `/repo` page: list, create, inspect (parts, sizes, sources), verify, protect, delete.
-4. **`deploy/` package** (`datamanager/deploy/`): `base.py` (driver ABC, §3.1), `registry.py`, `compose_single_machine.py`, `orchestrator.py` (§4). Tests with a **local-path** target in a temp dir (no ssh): transfer/resume (kill mid-copy), hash mismatch, atomic symlink flip (relative), rollback to previous, retention prune, activation hooks mocked (record calls, order), health-check failure → automatic switch-back.
+4. **`deploy/` package** (`datamanager/deploy/`): `base.py` (driver ABC, §3.1), `registry.py`, `compose_single_machine.py` with the `rsync` and `s3` transports (§3.4), `orchestrator.py` (§4). Tests for `s3` against a local fake S3 or Garage in a container. Tests with a **local-path** target in a temp dir (no ssh): transfer/resume (kill mid-copy), hash mismatch, atomic symlink flip (relative), rollback to previous, retention prune, activation hooks mocked (record calls, order), health-check failure → automatic switch-back.
 5. **`/deploy` page:** configurations CRUD with `validate_config`, "plan" preview, run deploy, per-class progress (reuse run/step SSE UI), history, rollback button, current state per class (`describe_state`).
 6. **Server smoke test (the real one):** package a small real build (one tiny region, no planet: tiles part omitted or a small test PMTiles), deploy to a local-path root, then via ssh to dev-mini, `current` flips, activate each class, rollback drill. Only then: planet + all regions.
 7. **Styles stage growth** (needed by the tiles class, can follow after 1–5): named styles with versions, glyphs and sprites, tiles `manifest.json` — see `SERVICES.md` / `TILESSERVICE-PMTILES.md` §styles. Until done, the tiles class can ship only `tiles.pmtiles` + the existing two styles.

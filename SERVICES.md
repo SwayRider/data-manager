@@ -12,8 +12,8 @@ list of pull requests are in **`TILESSERVICE-PMTILES.md`**, which is the handove
 **Why:** data-manager's tiles stage no longer builds tiles. It downloads the Protomaps daily **planet** build (`download-tiles`, ~140 GB, Protomaps basemap schema, Z0–15) and the
 release delivers it as `tiles.pmtiles` together with the map styles, glyphs and sprites, instead of three levels of custom-schema MBTiles.
 Decisions: 2026-10-01 (PMTiles instead of building tiles), **2026-10-05** (the whole planet is the tileset, no extent extract; `tilesservice` reads the file and serves tiles and styles;
-everything stays behind auth; public URLs in styles are filled in at serve time; separate per-user rate limit for the map in the gateway). Not chosen: serving the file statically and a
-Garage/S3 object store (the service accepts only gateway service tokens, clients never read the file; one file on one host needs no object store).
+everything stays behind auth; public URLs in styles are filled in at serve time; separate per-user rate limit for the map in the gateway). Not chosen: serving the file statically (the service accepts only gateway service tokens, clients never read the file).
+**Decision 2026-10-05 (later the same day): the release lives in an S3-compatible object store (Garage), reversing the earlier "one file on one host needs no object store".** See the object-store contract below.
 
 ### Today (code of `tilesservice` 642cb8a)
 - Go service; endpoints `GET /v1/tiles/ping` (public), `/v1/tiles/styles`, `/v1/tiles/styles/{name}`, `/v1/tiles/{tileset}/{z}/{x}/{y}`, all but `ping` need a **service token with scope `tiles:serve`**
@@ -27,7 +27,8 @@ PMTiles **v3**, clustered, gzip-compressed MVT, **Z0–15**, the whole planet; m
 `boundaries, buildings, earth, landuse, natural, places, pois, roads, transit, water`; features carry `kind`/`kind_detail`, `min_zoom`, `name` and `name:xx`. Built daily from Protomaps' own OSM snapshot (build date and
 schema version are in the file's metadata and in data-manager's asset record).
 
-### Contract: the release directory (data-manager writes, `tilesservice` only reads)
+### Contract: the release in the object store (data-manager writes, `tilesservice` only reads)
+> **Update 2026-10-05:** the tiles release is stored in the bucket `swayrider-tiles` and **not** in a bind-mounted directory. The tree below is the **key layout** under `releases/<id>/` (replace `<TILES_ROOT>/releases/<id>/tiles/` by `releases/<id>/`); the relative symlink `current` becomes the object `current.json` (`{"schema":1,"release":"<id>","prefix":"releases/<id>/","updated_at":"…"}`), written last with one PUT and polled by `tilesservice`. Manifest paths stay relative to the release prefix. A local-file backend (directory with `current` symlink, as drawn below) remains for tests and laptops. `tilesservice` gets a read-only key; data-manager's deploy a read/write key (env only). Env names are provisional until the tilesservice PRs: `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, source base `s3://swayrider-tiles` or `file:///data/tiles`. Glyphs, sprites and styles are read from the bucket and cached in memory. The mount sentence "mounted, not copied" below applies to the `file` backend only.
 ```
 <TILES_ROOT>/                              bind-mounted read-only into the container
   current -> releases/<id>/tiles           RELATIVE symlink inside the mount (an absolute host path does not resolve in the container)
