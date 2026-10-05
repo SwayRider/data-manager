@@ -1,0 +1,147 @@
+import datetime
+import json
+import shutil
+from collections import namedtuple
+from pathlib import Path
+
+import pytest
+
+from datamanager.config import config as app_config
+from datamanager.errors import PackageError
+from datamanager.models import Asset, ConfigProfile, DownloadRecord, Package, PackageLabel, Region
+from datamanager.services import assets as asset_service
+from datamanager.services import packages
+
+Env = namedtuple("Env", "session config_id repo")
+
+
+def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved"):
+    file = Path(app_config.DATA_ROOT) / rel
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_bytes(content)
+    asset = Asset(asset_type=asset_type, name=name, config_profile_id=config_id, path=rel,
+                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status)
+    session.add(asset)
+    session.commit()
+    return asset
+
+
+@pytest.fixture()
+def env(db_session, tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    monkeypatch.setattr(app_config, "PACKAGE_ROOT", str(repo))
+    cfg = ConfigProfile(name="dev-mini")
+    db_session.add(cfg)
+    db_session.flush()
+    db_session.add(Region(config_profile_id=cfg.id, name="benelux", color="#ff0000"))
+    db_session.commit()
+    cid, a = cfg.id, "library/assets"
+    for t, n, f in [("valhalla-tiles", "benelux", "valhalla/9/benelux/tiles.tar"),
+                    ("valhalla-admin", "benelux", "valhalla/9/benelux/admin.sqlite"),
+                    ("valhalla-timezones", "benelux", "valhalla/9/benelux/tz_world.sqlite"),
+                    ("pelias-index-snapshot", "benelux", "pelias/29/benelux/benelux.es-snapshot.tar"),
+                    ("pelias-config", "benelux", "pelias/29/benelux/pelias.json"),
+                    ("pelias-wof", "benelux", "pelias/29/benelux/wof.tar.gz"),
+                    ("pelias-interpolation-street-db", "benelux", "pelias-interpolation/25/benelux/street.db"),
+                    ("pelias-interpolation-address-db", "benelux", "pelias-interpolation/25/benelux/address.db"),
+                    ("region-outline", "benelux-core", "border/8/benelux-core.geojson"),
+                    ("region-outline", "benelux-extended", "border/8/benelux-extended.geojson"),
+                    ("style", "style-light", "styles/6/style-light.json"),
+                    ("style", "style-dark", "styles/6/style-dark.json")]:
+        _asset(db_session, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode())
+    pm = Path(app_config.DATA_ROOT) / "downloads/tiles/planet/20261004T000000Z/20261004.pmtiles"
+    pm.parent.mkdir(parents=True)
+    pm.write_bytes(b"PMTiles-fixture")
+    db_session.add(DownloadRecord(
+        source_key="tiles:planet", version_label="20261004T000000Z", url="http://x", filename=pm.name,
+        local_path=str(pm.relative_to(app_config.DATA_ROOT)), size_bytes=pm.stat().st_size,
+        content_hash=asset_service.sha256_of(pm), fetched_at=datetime.datetime(2026, 10, 4), status="approved"))
+    db_session.commit()
+    return Env(db_session, cid, repo)
+
+
+def test_create_package_copies_hashes_and_tags(env):
+    pkg = packages.create_package(env.session, env.config_id, labels={"candidate": ""}, note="first", created_by="tester")
+    assert pkg.status == "complete" and pkg.tag.startswith("r-") and pkg.tag.endswith("-1")
+    folder = env.repo / pkg.tag
+    doc = json.loads((folder / "package.json").read_text())
+    assert doc["config"]["name"] == "dev-mini" and doc["regions"] == ["benelux"]
+    assert set(doc["classes"]) == {"tiles", "valhalla", "pelias", "geodata"}
+    assert (folder / "valhalla/benelux/valhalla_tiles.tar").read_bytes() == b"valhalla-tiles:benelux"
+    assert (folder / "tiles/tiles.pmtiles").read_bytes() == b"PMTiles-fixture"
+    assert not list(env.repo.glob("*.partial"))
+    assert packages.verify_package(env.session, pkg.tag) == []
+    labels = {(l.key, l.origin) for l in pkg.labels}
+    assert ("config", "auto") in labels and ("candidate", "user") in labels
+    assert pkg.size_bytes == sum(i.size_bytes for i in pkg.items)
+    assert packages.create_package(env.session, env.config_id).tag.endswith("-2")
+
+
+def test_subset_of_classes(env):
+    pkg = packages.create_package(env.session, env.config_id, classes=["valhalla"])
+    assert {i.class_ for i in pkg.items} == {"valhalla"}
+
+
+def test_missing_or_unapproved_inputs_are_refused(env):
+    env.session.query(Asset).filter_by(asset_type="valhalla-admin").update({"status": "produced"})
+    env.session.commit()
+    with pytest.raises(PackageError, match="valhalla-admin"):
+        packages.create_package(env.session, env.config_id)
+    assert not env.repo.exists() or not list(env.repo.iterdir())  # nothing half-written
+
+
+def test_purged_source_file_is_reported(env):
+    (Path(app_config.DATA_ROOT) / "library/assets/valhalla/9/benelux/tiles.tar").unlink()
+    with pytest.raises(PackageError, match="is gone"):
+        packages.create_package(env.session, env.config_id, classes=["valhalla"])
+
+
+def test_source_changed_during_packaging_fails_cleanly(env):
+    (Path(app_config.DATA_ROOT) / "library/assets/valhalla/9/benelux/tiles.tar").write_bytes(b"tampered")
+    with pytest.raises(PackageError, match="source changed"):
+        packages.create_package(env.session, env.config_id, classes=["valhalla"])
+    assert not list(env.repo.glob("*.partial"))
+    assert env.session.query(Package).one().status == "failed"
+
+
+def test_verify_detects_tamper_and_extra_files(env):
+    pkg = packages.create_package(env.session, env.config_id, classes=["valhalla"])
+    folder = env.repo / pkg.tag
+    (folder / "valhalla/benelux/admin.sqlite").write_bytes(b"corrupt!")
+    (folder / "stray.txt").write_text("x")
+    problems = packages.verify_package(env.session, pkg.tag)
+    assert any("admin.sqlite" in p for p in problems) and any("stray.txt" in p for p in problems)
+
+
+def test_free_space_check(env, monkeypatch):
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: shutil._ntuple_diskusage(100, 100, 0))
+    with pytest.raises(PackageError, match="Not enough space"):
+        packages.create_package(env.session, env.config_id, classes=["valhalla"])
+
+
+def test_reindex_rebuilds_rows_and_labels(env):
+    pkg = packages.create_package(env.session, env.config_id, classes=["valhalla"], labels={"for": "q4"})
+    packages.edit_labels(env.session, pkg.tag, labels={"for": "q4", "live": "dev-mini"}, note="n", protected=True)
+    tag = pkg.tag
+    env.session.query(Package).delete()
+    env.session.commit()
+    env.session.expunge_all()  # the bulk delete cascaded in the DB; drop the stale objects
+    (env.repo / "r-20990101-1.partial").mkdir()
+    result = packages.reindex(env.session)
+    assert result == {"added": 1, "updated": 0, "partials_removed": 1}
+    again = packages.get(env.session, tag)
+    assert again.protected and again.note == "n" and len(again.items) == 3
+    assert {(l.key, l.value) for l in again.labels if l.origin == "user"} == {("for", "q4"), ("live", "dev-mini")}
+    assert any(l.key == "config" and l.origin == "auto" for l in again.labels)
+
+
+def test_delete_and_prune_respect_protection(env):
+    tags = [packages.create_package(env.session, env.config_id, classes=["valhalla"]).tag for _ in range(4)]
+    packages.edit_labels(env.session, tags[0], protected=True)
+    with pytest.raises(PackageError, match="protected"):
+        packages.delete(env.session, tags[0])
+    assert packages.prune(env.session, keep=2) == [tags[1]]  # dry run: oldest unprotected beyond the newest two
+    assert (env.repo / tags[1]).exists()
+    packages.prune(env.session, keep=2, dry_run=False)
+    assert not (env.repo / tags[1]).exists() and (env.repo / tags[0]).exists()
+    assert env.session.query(PackageLabel).filter_by(package_id=None).count() == 0

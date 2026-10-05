@@ -6,6 +6,7 @@ from datamanager.models.country import Country
 from datamanager.models.country_address_source import CountryAddressSource
 from datamanager.models.country_boundary_source import CountryBoundarySource
 from datamanager.models.downloads import DownloadRecord
+from datamanager.models.package import Package, PackageItem, PackageLabel
 from datamanager.models.runs import BuildRun, BuildStep
 from datamanager.models.region import (
     Region,
@@ -29,6 +30,9 @@ __all__ = [
     "CountryCarve",
     "DownloadRecord",
     "GlobalSetting",
+    "Package",
+    "PackageItem",
+    "PackageLabel",
     "Region",
     "RegionCountry",
     "RegionGtfsFeed",

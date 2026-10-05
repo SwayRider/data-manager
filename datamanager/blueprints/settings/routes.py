@@ -46,6 +46,7 @@ def _tools_context(error: str | None = None) -> dict:
 def index():
     bootstrap = {
         "Data root": config.DATA_ROOT,
+        "Package repository": str(config.package_root),
         "Database": config.DATABASE_PATH,
         "Redis": config.REDIS_URL,
     }
