@@ -1,0 +1,10 @@
+name: data-manager CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  dco:
+    uses: swayrider/ci-workflows/.github/workflows/dco-check.yml@main

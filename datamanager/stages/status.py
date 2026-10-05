@@ -22,6 +22,7 @@ from datamanager.stages.osm_extract import plan_inputs, region_fingerprint
 from datamanager.stages.polygons import polygons_fingerprint
 from datamanager.stages.styles import styles_fingerprint
 from datamanager.stages.wof_patch import ASSET_TYPE as WOF_PATCH_ASSET, plan_inputs as wof_patch_inputs
+from datamanager.stages.download_overture import fingerprint as overture_fingerprint, plan_inputs as overture_inputs
 from datamanager.stages.pelias import ASSET_TYPES as PELIAS_ASSETS, plan_inputs as pelias_inputs
 from datamanager.stages.pelias_interpolation import ASSET_TYPES as INTERPOLATION_ASSETS, plan_inputs as interpolation_inputs
 from datamanager.stages.valhalla import ASSET_TYPES as VALHALLA_ASSETS, plan_inputs as valhalla_inputs
@@ -184,6 +185,22 @@ def _pelias(session, config_id, resolved) -> StageStatus | None:
     return StageStatus("ok", f"{len(plan.regions)} region(s) imported from the current inputs.")
 
 
+def _overture(session, config_id, resolved) -> StageStatus | None:
+    plan = overture_inputs(session, config_id, resolved)
+    if plan.problems or not plan.regions:
+        return None
+    run = (
+        session.query(BuildRun)
+        .filter(BuildRun.stage_key == "download-overture-gtfs", BuildRun.config_profile_id == config_id, BuildRun.status == "approved")
+        .order_by(BuildRun.id.desc()).first()
+    )
+    if run is None:
+        return StageStatus("todo", f"{len(plan.regions)} region(s) to download.")
+    if (run.report_json or {}).get("summary", {}).get("fingerprint") != overture_fingerprint(plan):
+        return StageStatus("outdated", "The regions, their areas or GTFS feeds changed since the last run.")
+    return StageStatus("ok", f"{len(plan.regions)} region(s) downloaded.")
+
+
 def _pelias_interpolation(session, config_id, resolved) -> StageStatus | None:
     plan = interpolation_inputs(session, config_id, resolved)
     if plan.problems or not plan.regions:
@@ -294,6 +311,7 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
         "polygons": lambda: _polygons(session, config_id, resolved),
         "download-srtm": lambda: _srtm(session, config_id, resolved),
         "download-pelias-data": lambda: _pelias_data(session, config_id, resolved),
+        "download-overture-gtfs": lambda: _overture(session, config_id, resolved),
         "wof-patch": lambda: _wof_patch(session, config_id, resolved),
         "pelias": lambda: _pelias(session, config_id, resolved),
         "pelias-interpolation": lambda: _pelias_interpolation(session, config_id, resolved),

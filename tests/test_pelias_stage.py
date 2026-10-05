@@ -358,3 +358,56 @@ def test_es_calls_against_a_stub_server(tmp_path):
     finally:
         StubEs.snapshot_state = "SUCCESS"
         server.shutdown()
+
+
+# ---- Overture and GTFS ---------------------------------------------------------------------------------------------------
+
+def _overture_inputs(session, with_gtfs=True):
+    from datamanager.country_sources import SourceState
+    from datamanager.services import address_sources as address_service
+
+    address_service.set_state(session.get(Country, "aa"), "overture", SourceState(enabled=True))
+    session.commit()
+    _download(session, "overture:region-one-places", b"id,name,lat,lon\n1,Cafe,49,6\n", "places.csv")
+    if with_gtfs:
+        region = region_service.list_regions(session, session.query(Country).first() and 1)[0]
+        feed = region_service.add_gtfs_feed(session, region, "http://x/feed.zip", "Feed")
+        _download(session, f"gtfs:region-one-{feed.id}", _zip("stops"), "feed.zip")
+        return feed
+
+
+def test_overture_and_gtfs_are_imported_after_polylines(cfg, env):
+    session = SessionLocal()
+    feed = _overture_inputs(session)
+    run, result = _run(cfg.id)
+    assert result["status"] == "awaiting_review", run.report_json
+    assert env.importer_calls()[-3:] == ["polylines", "csv-importer", "transit"]
+    entry = run.report_json["pelias"][0]
+    assert [i["name"] for i in entry["importers"]][-2:] == ["csv-importer", "transit"]
+    layout = (env.calls_dir / "layout.txt").read_text()
+    assert "csv/overture-places.csv" in layout and "csv/overture-addresses.csv" not in layout
+    assert any("No approved Overture addresses" in w for w in entry["warnings"])
+    load = json.loads((env.calls_dir / "csv-importer-pelias.json").read_text())
+    assert load["imports"]["csv"]["files"] == ["overture-places.csv"]
+    feeds = json.loads((env.calls_dir / "transit-pelias.json").read_text())["imports"]["transit"]["feeds"]
+    assert feeds[0]["layerId"] == "stops" and feeds[0]["filename"] == f"region-one-{feed.id}-stops.txt"
+    assert "url" not in feeds[0]  # the transit importer rejects an empty url and then exits 0 without importing
+
+
+def test_failing_overture_importer_is_a_warning_not_a_failure(cfg, env):
+    _overture_inputs(SessionLocal(), with_gtfs=False)
+    env.monkeypatch.setenv("FAIL_IMPORTER", "csv-importer")
+    run, result = _run(cfg.id)
+    entry = run.report_json["pelias"][0]
+    assert result["status"] == "awaiting_review" and entry["result"] == "built"
+    assert any("csv-importer failed" in w for w in entry["warnings"]) and entry["importers"][-1]["error"]
+    assert assets.current(SessionLocal(), cfg.id, "pelias-index-snapshot", "region-one") is None  # still unapproved
+
+
+def test_an_optional_importer_that_adds_nothing_is_a_warning(cfg, env):
+    _overture_inputs(SessionLocal())
+    env.monkeypatch.setattr(pelias_es.TemporaryElasticsearch, "count", lambda self, index: 7)  # nothing is ever added
+    run, result = _run(cfg.id)
+    entry = run.report_json["pelias"][0]
+    assert result["status"] == "awaiting_review" and entry["result"] == "built"
+    assert any("transit added no documents" in w for w in entry["warnings"]) and any("csv-importer added no documents" in w for w in entry["warnings"])

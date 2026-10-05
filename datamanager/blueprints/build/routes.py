@@ -13,6 +13,7 @@ from datamanager.stages.download_planet import PLANET_KEY
 from datamanager.stages.download_srtm import planned_tiles
 from datamanager.stages.download_tiles import TILES_KEY
 from datamanager.stages.osm_extract import plan_inputs
+from datamanager.stages.download_overture import plan_inputs as overture_inputs
 from datamanager.stages.pelias import plan_inputs as pelias_inputs
 from datamanager.stages.pelias_interpolation import plan_inputs as interpolation_inputs
 from datamanager.stages.valhalla import plan_inputs as valhalla_inputs
@@ -59,6 +60,10 @@ STAGES = (
      "Fetches what the Pelias import loads as versioned downloads: the Placeholder store, GeoNames, the Who's On First bundles "
      "of every core and overlap country, GeoNames postal files, official locality polygons and the OpenAddresses sources "
      "(needs the token of Settings → Pelias, otherwise those are skipped). Unchanged sources are not fetched again."),
+    ("download-overture-gtfs", "Download Overture & GTFS",
+     "Fetches Overture Maps places and addresses of every region with an Overture-enabled country (bounding box of its overlap "
+     "polygon, converted to CSV for the Pelias csv-importer) and the region's GTFS feeds (Configure → Transit) as versioned "
+     "downloads. Needs the overturemaps tool and the approved Region polygons. A source that fails is a warning."),
     ("wof-patch", "Patch WOF localities",
      "Replaces the Who's On First locality (and municipality) polygons of every country that has a locality boundary source "
      "(right-click a country on the Configure map) by OSM administrative boundaries or an official polygon file, and writes "
@@ -133,6 +138,9 @@ def _stage_states(config, resolved=None) -> dict[str, str | None]:
         elif key == "pelias":
             problems = pelias_inputs(session, config.id, resolved).problems
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
+        elif key == "download-overture-gtfs":
+            problems = overture_inputs(session, config.id, resolved).problems
+            states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
         elif key == "pelias-interpolation":
             problems = interpolation_inputs(session, config.id, resolved).problems
             states[key] = problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") if problems else None
@@ -197,7 +205,7 @@ def start(stage_key: str):
     if _stage_states(config).get(stage_key):
         abort(422)
     params = {}
-    if stage_key in ("osm-extract", "valhalla", "pelias", "pelias-interpolation") and request.form.getlist("regions"):
+    if stage_key in ("osm-extract", "valhalla", "pelias", "pelias-interpolation", "download-overture-gtfs") and request.form.getlist("regions"):
         params["regions"] = request.form.getlist("regions")
     if stage_key in ("download-planet", "download-tiles"):
         if request.form.get("use_existing"):

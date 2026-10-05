@@ -1,0 +1,10 @@
+{% set summary = run.report_json.get('summary') %}
+{% if summary %}<p>{{ summary.regions }} region(s), {{ summary.sources }} source(s): {{ summary.fetched }} new, {{ summary.unchanged }} unchanged, {{ summary.failed }} failed.
+  {% if summary.release %}Overture release {{ summary.release }}.{% endif %}</p>{% endif %}
+{% for w in run.report_json.get('warnings', []) %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% if run.report_json.get('overture_sources') %}
+<table>
+  <thead><tr><th>Source</th><th>Status</th><th>Rows</th><th>Skipped</th><th>Detail</th></tr></thead>
+  <tbody>{% for s in run.report_json.overture_sources %}<tr><td>{{ s.label }}<br><code class="muted">{{ s.key }}</code></td><td>{{ s.status }}</td><td>{{ s.rows if s.rows is defined else '' }}</td><td>{{ s.skipped if s.skipped is defined else '' }}</td><td>{{ s.detail }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endif %}

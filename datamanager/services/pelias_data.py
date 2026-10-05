@@ -21,7 +21,9 @@ from pathlib import Path
 from datamanager.services import wof_patch
 from datamanager.services.valhalla_build import run as run_command
 
-IMPORTERS = ("schema", "whosonfirst", "geonames", "openaddresses", "openstreetmap", "polylines")
+IMPORTERS = ("schema", "whosonfirst", "geonames", "openaddresses", "openstreetmap", "polylines", "csv-importer", "transit")
+OPTIONAL_IMPORTERS = ("csv-importer", "transit")  # their failure is a warning: Overture and GTFS never fail a region
+OVERTURE_FILES = {"places": "overture-places.csv", "addresses": "overture-addresses.csv"}
 PROD_WOF_PATH = "/data/whosonfirst"
 PLACEHOLDER_URL = "http://pelias-placeholder:3000"
 LIBPOSTAL_URL = "http://pelias-libpostal:4400"
@@ -127,7 +129,21 @@ def gunzip(source: Path, target: Path) -> Path:
     return target
 
 
-def prepare(layout: Layout, countries: list[CountryData], openaddresses: dict[str, Path], pbf: Path, polylines: Path) -> dict:
+def prepare_gtfs(layout: Layout, feeds: list[tuple[str, Path]]) -> list[dict]:
+    """Extract `stops.txt` of every GTFS zip to `transit/<name>-stops.txt` (the transit importer's own downloader is not used)
+    and return the `imports.transit.feeds` entries for them."""
+    found = []
+    layout.transit.mkdir(parents=True, exist_ok=True)
+    for name, file in feeds:
+        filename = f"{name}-stops.txt"
+        with zipfile.ZipFile(file) as archive, archive.open("stops.txt") as src, open(layout.transit / filename, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        found.append({"layerId": "stops", "filename": filename, "agencyId": name, "agencyName": name, "layerName": "stop"})
+    return found
+
+
+def prepare(layout: Layout, countries: list[CountryData], openaddresses: dict[str, Path], pbf: Path, polylines: Path,
+            overture: dict[str, Path] | None = None) -> dict:
     """Write every input where the importers read it; returns counts for the report."""
     layout.wof_sqlite.mkdir(parents=True, exist_ok=True)
     for country in countries:
@@ -142,17 +158,19 @@ def prepare(layout: Layout, countries: list[CountryData], openaddresses: dict[st
         rezip(country.geonames, layout.geonames(country.geonames_code) / f"{country.geonames_code}.zip")
     for source, file in openaddresses.items():
         gunzip(file, layout.openaddresses / f"{source}.geojson")
+    for theme, file in (overture or {}).items():
+        _link(file, layout.csv / OVERTURE_FILES[theme])
     _link(pbf, layout.osm / layout.pbf_name)
     _link(polylines, layout.polylines / "polylines.0sv.gz")
     for directory in (layout.leveldb, layout.csv, layout.transit, layout.configs, layout.logs):
         directory.mkdir(parents=True, exist_ok=True)
-    return {"countries": len(countries), "openaddresses_files": len(openaddresses)}
+    return {"countries": len(countries), "openaddresses_files": len(openaddresses), "overture_files": len(overture or {})}
 
 
 # ---- configuration ------------------------------------------------------------------------------------------------
 
 def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof_codes: list[str], openaddresses: list[str],
-                  prod: bool = False) -> dict:
+                  prod: bool = False, csv_files: list[str] | None = None, transit_feeds: list[dict] | None = None) -> dict:
     """The legacy `pelias-load.json`, one dict. `prod` is the configuration the deployed API and PIP service use: the
     docker service host name and the WOF path inside the PIP container."""
     wof_path = PROD_WOF_PATH if prod else str(layout.wof)
@@ -187,14 +205,14 @@ def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof
         "imports": {
             "adminLookup": {"enabled": True, "maxConcurrentRequests": 100, "usePostalCities": True},
             "blacklist": {"files": []},
-            "csv": {"datapath": str(layout.csv), "files": ["overture-places.csv", "overture-addresses.csv"]},
+            "csv": {"datapath": str(layout.csv), "files": list(OVERTURE_FILES.values()) if csv_files is None else csv_files},
             "geonames": {"datapath": str(layout.root / "geonames"), "countryCode": "ALL"},
             "openstreetmap": {"datapath": str(layout.osm), "leveldbpath": str(layout.leveldb), "removeDisusedVenues": True,
                               "import": [{"filename": layout.pbf_name}]},
             "openaddresses": {"datapath": str(layout.openaddresses), "files": openaddresses},
             "polyline": {"datapath": str(layout.polylines), "files": ["polylines.0sv.gz"]},
             "whosonfirst": {"datapath": wof_path, "importPostalcodes": True, "countryCode": wof_codes},
-            "transit": {"datapath": str(layout.transit)},
+            "transit": {"datapath": str(layout.transit), "feeds": transit_feeds or []},
         },
     }
 

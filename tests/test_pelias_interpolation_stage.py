@@ -136,6 +136,25 @@ def test_csv_conversion_filters_sorts_and_keeps_the_header(tmp_path):
     assert lines[1].endswith("aa/x:h9Alpha Road")
 
 
+def test_csv_has_no_quotes_or_commas_in_fields(tmp_path):
+    source = tmp_path / "a.geojson.gz"
+    source.write_bytes(gzip.compress(json.dumps(_feature("1", 'CALLE "PASIONARIA", EMILIO', city='A "B" C')).encode() + b"\n"))
+    pelias_interpolation.openaddresses_csv({"es/x": source}, tmp_path / "out.csv", tmp_path / "tmp")
+    body = (tmp_path / "out.csv").read_text().splitlines()[1]
+    assert '"' not in body and body.split(",")[3] == "CALLE PASIONARIA EMILIO" and len(body.split(",")) == 11
+
+
+def test_a_script_that_stops_reading_is_killed(tmp_path, monkeypatch):
+    stuck = tmp_path / "node"
+    stuck.write_text("#!/bin/sh\nexec sleep 60\n")
+    stuck.chmod(stuck.stat().st_mode | stat.S_IEXEC)
+    (tmp_path / "repo" / "cmd").mkdir(parents=True)
+    monkeypatch.setattr(pelias_interpolation, "STALL_SECONDS", 0.5)
+    lines = (b"x" * 1000 + b"\n" for _ in range(200000))  # more than a pipe holds
+    with pytest.raises(pelias_interpolation.BuildError, match="stalled"):
+        pelias_interpolation.run_script(str(stuck), tmp_path / "repo", "oa.js", ["a", "b"], tmp_path / "logs", "oa", tmp_path / "tmp", lines)
+
+
 def test_plan_lists_inputs_warnings_and_blocked_reasons(cfg, env):
     plan = stage.plan_inputs(SessionLocal(), cfg.id, _resolved(cfg.id))
     assert plan.problems == [] and plan.regions[0].fingerprint and list(plan.regions[0].openaddresses) == ["aa/countrywide"]

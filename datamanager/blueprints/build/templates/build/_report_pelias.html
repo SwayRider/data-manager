@@ -13,7 +13,7 @@
     {% if r.importers %}
     <table>
       <thead><tr><th>Importer</th><th>Documents added</th><th>Total</th><th>Time</th></tr></thead>
-      <tbody>{% for i in r.importers %}<tr><td>{{ i.name }}</td><td>{{ i.docs }}</td><td>{{ i.total }}</td><td>{{ i.seconds }} s</td></tr>{% endfor %}</tbody>
+      <tbody>{% for i in r.importers %}<tr><td>{{ i.name }}</td><td>{{ i.docs }}</td><td>{{ i.total }}</td><td>{{ i.seconds }} s{% if i.error %} <span class="error">failed: {{ i.error }}</span>{% endif %}</td></tr>{% endfor %}</tbody>
     </table>
     {% endif %}
   {% endif %}

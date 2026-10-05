@@ -17,6 +17,8 @@ import os
 import platform
 import sqlite3
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from datamanager.services.valhalla_build import BuildError
@@ -34,6 +36,15 @@ def pbf2json_binary(repo: Path) -> Path:
 
 # ---- OpenAddresses: GeoJSON -> sorted CSV -------------------------------------------------------------------------
 
+_FLAT = str.maketrans({'"': None, ",": " ", "\n": " ", "\r": " ", "\t": " ", "\x00": None})
+
+
+def _field(value) -> str:
+    """A CSV field without quotes, commas or line breaks: the importer's parser stops for good on some quoted fields (a stalled
+    run on `es/countrywide` rows), and `sort -t,` of the legacy script cannot handle commas in fields either."""
+    return " ".join(str(value or "").translate(_FLAT).split())
+
+
 def _row(source: str, line: bytes, counter: int) -> list[str] | None:
     try:
         feature = json.loads(line)
@@ -45,8 +56,11 @@ def _row(source: str, line: bytes, counter: int) -> list[str] | None:
     if not number or not street:
         return None
     ident = str(props.get("hash") or props.get("id") or counter)
-    return [str(lon), str(lat), number, street, *(str(props.get(k) or "").strip() for k in ("unit", "city", "district", "region", "postcode")),
-            str(props.get("id") or ""), f"{source}:{ident}"]
+    number, street = _field(number), _field(street)
+    if not number or not street:
+        return None
+    return [str(lon), str(lat), number, street, *(_field(props.get(k)) for k in ("unit", "city", "district", "region", "postcode")),
+            _field(props.get("id")), _field(f"{source}:{ident}")]
 
 
 def openaddresses_csv(files: dict[str, Path], target: Path, tmp_dir: Path) -> dict:
@@ -56,7 +70,7 @@ def openaddresses_csv(files: dict[str, Path], target: Path, tmp_dir: Path) -> di
     unsorted = tmp_dir / "oa-unsorted.csv"
     rows = skipped = 0
     with open(unsorted, "w", encoding="utf-8", newline="") as out:
-        writer = csv.writer(out, lineterminator="\n")
+        writer = csv.writer(out, lineterminator="\n", quoting=csv.QUOTE_NONE, escapechar="\\")
         for source, file in sorted(files.items()):
             opener = gzip.open if str(file).endswith(".gz") else open
             with opener(file, "rb") as handle:
@@ -111,25 +125,56 @@ def run_script(node: str, repo: Path, script: str, args: list[str], logs: Path, 
     command = f'exec "$NODE" "$SCRIPT" "$@" 1>"$OUT" 2>"$ERR" 3>"$SKIP"'
     env = {**_env(tmp_dir), "NODE": node, "SCRIPT": str(repo / "cmd" / script), "OUT": str(out), "ERR": str(err), "SKIP": str(skip)}
     proc = subprocess.Popen(["bash", "-c", command, "bash", *args], cwd=repo, env=env, stdin=subprocess.PIPE if lines is not None else None)
-    _feed(proc, lines)
-    if proc.wait() != 0:
+    dog = _feed(proc, lines)
+    code = proc.wait()
+    if dog is not None and dog.stalled:
+        raise BuildError(f"interpolation {step} stalled: no input accepted for {STALL_SECONDS // 60} minutes (killed). " + " | ".join(_tail(err)))
+    if code != 0:
         raise BuildError(f"interpolation {step} failed (exit {proc.returncode}): " + " | ".join(_tail(err)))
     return {"skipped": _count_lines(skip), "errors": _count_lines(err)}
 
 
-def _feed(proc: subprocess.Popen, lines) -> None:
+STALL_SECONDS = 1800  # a script that takes no input for this long is stuck (its parser died): it is killed
+
+
+class _Watchdog:
+    """Kills `proc` when `touch` was not called for `limit` seconds."""
+
+    def __init__(self, proc: subprocess.Popen, limit: float):
+        self.proc, self.limit, self.stalled = proc, limit, False
+        self.last = time.monotonic()
+        self.done = threading.Event()
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def touch(self) -> None:
+        self.last = time.monotonic()
+
+    def _watch(self) -> None:
+        while not self.done.wait(min(5.0, max(0.05, self.limit / 4))):
+            if time.monotonic() - self.last > self.limit:
+                self.stalled = True
+                self.proc.kill()
+                return
+
+
+def _feed(proc: subprocess.Popen, lines) -> _Watchdog | None:
     if lines is None:
-        return
+        return None
+    dog = _Watchdog(proc, STALL_SECONDS)
     try:
-        for line in lines:
+        for count, line in enumerate(lines, 1):
             proc.stdin.write(line)
-    except BrokenPipeError:
-        pass  # the script exited early: its exit code and stderr say why
+            if count % 1000 == 0:
+                dog.touch()
+    except (BrokenPipeError, ValueError):
+        pass  # the script exited early or was killed: its exit code and stderr say why
     finally:
         try:
             proc.stdin.close()
-        except BrokenPipeError:
+        except (BrokenPipeError, ValueError):
             pass
+        dog.done.set()  # input is finished: what the script does after that (building indexes) may take long without reading
+    return dog
 
 
 def polyline_lines(file: Path):
