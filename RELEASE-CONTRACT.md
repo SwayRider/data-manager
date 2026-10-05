@@ -35,11 +35,11 @@ Classes are the unit a deploy config maps to a drive/target. Sources are existin
 A package may contain all classes or a subset (`package.json` lists them); a package of subset classes is valid, **but** packaging validates cross-class consistency when classes overlap: the same region set in `valhalla`, `pelias` and `geodata`, one configuration/resolved-hash, all source runs `approved` (only approved assets feed packages, as for stages).
 
 ### 2.2 Archive form
-- The package **owns its files**: parts are hard-linked (same filesystem) or copied from `library/`/`downloads/` into `releases/<tag>/`, so asset/download cleanup can never break a package. Cleanup learns "referenced by a package" (like the existing "in use" protection).
+- The package **owns its files**: parts are **copied** from `library/`/`downloads/` into the package repository (decision 2026-10-05, replaces "hard-linked or copied"). The repository is its own folder, `PACKAGE_ROOT` (env, default `DATA_ROOT/releases`; on this machine `/mnt/hdd-pool/swayrider/data-repo`, a ZFS dataset), on a different filesystem than `DATA_ROOT` (XFS on `/mnt/ssd2`), where hard links are impossible. Same filesystem: `os.link` is allowed as an optimisation (copy on `EXDEV`). Each file is copied and hashed in one pass (sha256, compared with the known `asset.content_hash`/download hash), so asset/download cleanup can never break a package and needs no "referenced by a package" protection. Every package costs its full size, hence the free-space pre-check (size x 1.05) and retention (§2.4). Recommended dataset properties: `compression=lz4` or `off` (parts are already compressed), `recordsize=1M`.
 - Recommended form: `releases/<tag>/package.json` + per class either a directory of files or one `<class>/<part>.tar` for many-small-file parts (wof sqlite dir, geodata, styles/glyphs). **Single huge already-compressed files (`tiles.pmtiles`, ES snapshot, `valhalla_tiles.tar`) are stored as-is, not re-tarred** (no gain; keeps rsync resume and range reads). Exact form: open decision §7.
-- Layout:
+- Layout (`$PACKAGE_ROOT/<tag>/`; `<tag>.partial/` while building, swept on failure and at start, never counted as a package):
 ```
-releases/<tag>/
+<tag>/
   package.json                  manifest (below); written last; its presence = package complete
   tiles/        tiles.pmtiles, tiles-support.tar (styles+glyphs+sprites), manifest.json
   valhalla/<region>/  valhalla_tiles.tar, admin.sqlite, tz_world.sqlite
@@ -62,7 +62,10 @@ releases/<tag>/
 ```
 Rules: sha256 per file (a `tar` part hashes the tar); `source` ids give the traceability join (package → asset → run → download) of DESIGN.md; the file is written after all parts are verified, atomically; a package is never modified afterwards. The tiles class additionally carries the tilesservice `manifest.json` (SERVICES.md schema) inside its part directory; the deploy copies it as part of the tiles release.
 
-### 2.4 Tags, retention, repository
+### 2.4 Tags, labels, retention, repository
+
+**Automatic tags** are frozen at packaging time, written into `package.json` (`tags` object) and mirrored in the table `package_label` (`origin = auto`) for filtering: `config` (name and id), `resolved_hash` per region, `regions`, `classes`, `created_at` (UTC), `created_by`, per class the data dates and tool versions (planet OSM date, Protomaps build date, Pelias run ids, valhalla tag, elasticsearch version, pelias ref, `PLAN_VERSION`) and the source run ids. **User labels** are mutable (`origin = user`): free `key=value` or bare labels (`candidate`, `live=dev-mini`), a `note` and `protected`. They live in the DB and are re-exported to `labels.json` next to `package.json` (outside the hashed content, so the package stays immutable). **The folder is self-describing**: `flask packages-reindex` rebuilds the `package`, `package_item` and `package_label` rows from `package.json` + `labels.json`, so the repository can move to another machine or survive a lost DB. Tables (migration 0019): `package(id, tag UNIQUE, config_profile_id, status building|complete|failed, size_bytes, path, note, protected, created_at, created_by, build_run_id, package_json_hash)`, `package_item` as in §6, `package_label(package_id, key, value, origin)`. Packaging is a `package` stage run (RQ, byte progress) **without a review gate** (a package is not input of another stage); the package itself is the artefact and `verify` is the check.
+
 - Tag `r-YYYYMMDD-N` (N = counter per day), unique, immutable; optional free-text note and `protected` flag (never auto-pruned). Delete only if no deployment references it as current or previous.
 - Retention: keep newest N unprotected packages (setting, default 3) + anything protected or live on a deploy config. Disk matters: each package with tiles is ~140 GB; two planet builds already in `downloads/` (`download.tiles_keep`) — set `tiles_keep = 2` while rollback of tiles is wanted, but packages hold their own hard links so the download prune is independent.
 - Create from the `/repo` page ("Package current approved build" for a configuration; list/inspect/verify/delete/protect). Creation is an RQ job (same `build_run`/`build_step` progress infrastructure, stage key `package`) since hashing 140 GB takes time.
@@ -151,8 +154,33 @@ Update `DESIGN.md` Phase 3, `CLAUDE.md` and this file's "code state" line when e
 2. **Archive form:** per-class dirs/tars with huge single files stored raw (§2.2), vs. one tarball per class vs. one tarball per package. *Recommend §2.2.* Tarring 140 GB tiles gives nothing and breaks resume.
 3. **`tiles:planet` is a download record, not an asset.** *Recommend:* package items may reference a `download_id`; planet files protected from `tiles_keep` pruning through the hard link. Alternative: register the approved planet as an asset (heavier change).
 4. **Deploy config storage:** DB table edited in UI (§3) vs. YAML files in the data-manager repo. *Recommend DB* (UI-first, like the rest); export/import as JSON.
-5. **Two planets on disk** (target: current + previous ≈ 280 GB; build host: downloads + package hard links share one filesystem or are doubled if `releases/` is on another disk). *Recommend* `releases/` on the same filesystem as `downloads/`, else copy-and-warn.
+5. **Two planets on disk / repository filesystem** — decided 2026-10-05: the repository is a separate folder (`PACKAGE_ROOT`, a ZFS dataset), packages are copies (§2.2); target hosts hold current + previous (~280 GB tiles).
 6. **Verification cost:** full sha256 of a 140 GB file on the target after each deploy (minutes on SSD). *Recommend* full by default, `size` mode for dev.
 7. **Pelias ES restore** needs the target's ES to see the snapshot repository path (`ES_SNAPSHOTS_PATH`) and the snapshot repo registered; whether the driver registers it or the infra does. *Recommend infra registers once, driver only restores.*
 8. **Service map** (compose file + service names per region) lives in the deploy config; infra's inconsistent names (e.g. `sw-dev-germany-pip`) must be fixed or mapped explicitly.
 9. **Auth for the ssh user** and whether data-manager runs on the target itself (then `host: null`, local paths) — both supported by the same driver.
+
+## 8. Cleanup after packaging (decided 2026-10-05)
+
+Purpose: keep the SSD (`DATA_ROOT`) small once a package holds the results. After a package is **complete and verified** the `/repo` package page (also reachable from Build → Downloads) offers a cleanup dialog: one checkbox per category, **prefilled with the defaults below**, a dry run listing files and sizes, then delete. Defaults are settings `cleanup.default.<category>` = `delete|keep` (editable in Settings and in the dialog). Registry: `services/cleanup.py` (category → selector → files/rows + size), reusing the dry-run, pin and in-use logic of `services/downloads.py` and `services/assets.py` (`prune`, `_remove_files`).
+
+| # | Category | Where | Default |
+|---|---|---|---|
+| 1 | Planet OSM download (`planet:osm`) | `downloads/planet` | keep |
+| 2 | Protomaps tiles download (`tiles:planet`) | `downloads/tiles` | keep |
+| 3 | Per-country PBFs (`country-pbf`) | `library/assets/country-pbf` | delete |
+| 4 | Region PBFs (`osm-pbf`, `osm-core-pbf`) | `library/assets/osm-*` | delete |
+| 5 | Valhalla outputs (`valhalla-*`) | assets | delete |
+| 6 | Pelias index snapshots, current and superseded | assets | delete |
+| 7 | Pelias WOF (`pelias-wof`, `wof-patched-sqlite`, incl. unapproved) | assets | delete |
+| 8 | Interpolation DBs (`street.db`, `address.db`) | assets | delete |
+| 9 | Small derived assets (polygons, borders, crossings, outlines, `pelias-config`, styles) — **never the manually drawn `carve-polygon`** | assets | delete |
+| 10 | SRTM unpacked for Valhalla | `library/srtm/<run>` | delete |
+| 11 | SRTM downloads (`srtm:*`) | `downloads/srtm` | keep |
+| 12 | Pelias source downloads (WOF, GeoNames, OpenAddresses, placeholder) | `downloads/…` | delete |
+| 13 | Overture CSVs and GTFS zips | `downloads/{overture,gtfs}` | delete |
+| 14 | Older download versions beyond `*_keep` | `downloads/*` | delete |
+| 15 | Rejected/failed run leftovers (`produced` assets of rejected runs, `work/<run>`) | `library`, `work` | delete |
+| — | Natural Earth, country geometry, autofill, `.poly` files (16) and `tools/` (17) | | **not in the dialog; never touched** |
+
+Rules: never delete a pinned or in-use (running/queued) download or asset, nor the versions that `*_keep` protects; deleting an approved asset marks the row `purged` (file gone; row, hashes and `source_download_ids` stay for traceability); stage status and fingerprints treat `purged` as "packaged in `<tag>`, rebuild on demand", not as "outdated" or failed; a stage whose input is purged refuses to start with a hint to rebuild the upstream stage. Sizes on 2026-10-05 (for orientation): downloads 252 G, library 594 G of which Pelias snapshots 454 G.
