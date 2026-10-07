@@ -256,13 +256,17 @@ def index():
     config = _current_config()
     resolved = resolve.to_dict(resolve.resolve_config(session, config.id)) if config else None
     states = _stage_states(config, resolved)
+    statuses = stage_status.compute(session, config.id, resolved, states) if config else {}
+    for key, status in statuses.items():  # a stage blocked by a cleaned-up input cannot be started either
+        if status.state == "blocked" and not states.get(key):
+            states[key] = status.detail
     return render_template(
         "build/index.html",
         config=config,
         configs=profiles.list_profiles(session),
         stages=[st for st in STAGES if st[0] != "download-osm" or settings_service.get(session, "osm.source") == "geofabrik"],
         states=states,
-        statuses=stage_status.compute(session, config.id, resolved, states) if config else {},
+        statuses=statuses,
         planet=_planet_info(),
         tiles=_planet_info(TILES_KEY),
         region_names=[r["name"] for r in resolved["regions"] if r["core"]] if config else [],

@@ -111,7 +111,7 @@ def test_apply_purges_files_but_keeps_rows_and_current_assets(env):
     snap = asset_service.current(env.session, env.config_id, "pelias-index-snapshot", "benelux")
     assert snap is not None and asset_service.is_purged(snap) and not asset_service.abs_path(snap).exists()
     assert snap.meta_json["purged"]["package"] == env.tag and snap.content_hash
-    assert asset_service.usable(snap)
+    assert not asset_service.usable(snap)  # a purged result is rebuilt, never skipped
     assert DATA("library/assets/polygons/3/carve-be.poly").exists()  # carve-outs are never offered
     overlap = env.session.query(Asset).filter_by(asset_type="overlap-polygon").one()
     assert asset_service.is_purged(overlap) and not DATA(overlap.path).exists()
@@ -184,3 +184,48 @@ def test_old_versions_are_deleted_not_purged(env):
     assert plan.items and all(i.kind == "delete-download" for i in plan.items)
     cleanup.apply(env.session, env.tag, ["old_versions"])
     assert env.session.query(DownloadRecord).filter(DownloadRecord.source_key == "gtfs:x").count() == 2  # newest two stay
+
+
+def test_build_status_shows_purged_results_not_up_to_date(env):
+    from datamanager.stages import status as stage_status
+
+    _verified(env)
+    assert stage_status._own_purged(env.session, env.config_id, "pelias") is None  # files still there
+    cleanup.apply(env.session, env.tag, ["pelias_snapshots", "country_pbf", "small_assets", "valhalla"])
+    for key in ("pelias", "valhalla", "styles", "extract-countries"):
+        state = stage_status._own_purged(env.session, env.config_id, key)
+        assert state is not None and state.state == "purged" and env.tag in state.detail, key
+    assert stage_status._own_purged(env.session, env.config_id, "osm-extract") is None  # nothing of it was removed
+    assert stage_status._own_purged(env.session, env.config_id, "no-such-stage") is None
+
+
+def test_stage_with_a_cleaned_up_input_is_blocked_with_the_producer(env):
+    from datamanager.stages import status as stage_status
+
+    _verified(env)
+    assert stage_status._purged_input(env.session, env.config_id, "osm-extract") is None
+    cleanup.apply(env.session, env.tag, ["country_pbf"])
+    reason = stage_status._purged_input(env.session, env.config_id, "osm-extract")
+    assert "country-pbf" in reason and "extract-countries" in reason and env.tag in reason
+    assert stage_status._purged_input(env.session, env.config_id, "valhalla") is None
+
+
+def test_new_package_is_refused_while_results_are_cleaned_up(env):
+    _verified(env)
+    cleanup.apply(env.session, env.tag, ["valhalla"])
+    problems = packages.plan(env.session, env.config_id, ["valhalla"]).problems
+    assert problems and all("removed by the cleanup" in p for p in problems)
+
+
+def test_package_verify_and_cleanup_are_not_green_once_the_results_are_cleaned_up(env):
+    from datamanager.stages import status as stage_status
+
+    _verified(env)
+    assert stage_status._package(env.session, env.config_id).state == "ok"
+    assert stage_status._package_verify(env.session, env.config_id).state == "ok"
+    cleanup.apply(env.session, env.tag, ["valhalla", "pelias_snapshots"])
+    env.session.add(BuildRun(stage_key="cleanup", config_profile_id=env.config_id, status="approved", params_json={"tag": env.tag}))
+    env.session.flush()
+    for fn in (stage_status._package, stage_status._package_verify, stage_status._cleanup):
+        state = fn(env.session, env.config_id)
+        assert state.state == "purged" and env.tag in state.detail, fn.__name__

@@ -102,7 +102,9 @@ def _asset_item(session: Session, config_id: int, class_: str, region: str | Non
         return None
     source = asset_service.abs_path(asset)
     if not source.exists():
-        problems.append(f"{class_}: file of {asset_type} '{name}' is gone ({asset.path}); rebuild the stage")
+        why = (f"was removed by the cleanup (packaged in {asset.meta_json['purged']['package']})"
+               if asset_service.is_purged(asset) else f"is gone ({asset.path})")
+        problems.append(f"{class_}: file of {asset_type} '{name}' {why}; rebuild the stage")
         return None
     return PlanItem(class_, region, f"{class_}/{dest}", source, source.stat().st_size, asset.content_hash,
                     asset_id=asset.id, meta={"asset_type": asset_type, "name": name, "run_id": asset.produced_by_run_id})

@@ -100,8 +100,8 @@ def is_purged(asset: Asset) -> bool:
 
 
 def purge(session: Session, asset: Asset, package_tag: str) -> int:
-    """Cleanup after packaging: remove the files, keep the row (hash, provenance, fingerprint) so stages still
-    count as up to date. Returns the bytes that were on disk."""
+    """Cleanup after packaging: remove the files, keep the row (hash, provenance, fingerprint) so the Build page can
+    say what was cleaned up. Returns the bytes that were on disk."""
     freed = sum(f.stat().st_size for f in _files(asset) if f.exists())
     extra = {}
     geojson = Path(config.DATA_ROOT) / asset.meta_json["geojson"] if asset.meta_json.get("geojson") else None
@@ -121,8 +121,8 @@ def purge(session: Session, asset: Asset, package_tag: str) -> int:
 
 
 def usable(asset: Asset) -> bool:
-    """Present on disk, or knowingly purged (skip checks: a purged result is not a reason to rebuild)."""
-    return is_purged(asset) or abs_path(asset).exists()
+    """Present on disk. A result removed by the cleanup is not usable: stages rebuild it instead of skipping."""
+    return abs_path(asset).exists()
 
 
 def input_path(asset: Asset) -> Path:

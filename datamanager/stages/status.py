@@ -6,10 +6,12 @@ since (a newer approved planet, other regions or carves, other country files or 
 is recorded as a fingerprint in the meta of the assets a stage produces, and compared with the current one."""
 import datetime
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from datamanager.models import Asset, BuildRun
+from datamanager.config import config as app_config
+from datamanager.models import Asset, BuildRun, DownloadRecord
 from datamanager.services import assets, downloads
 from datamanager.stages.download_osm import osm_source_key, planned_paths
 from datamanager.stages.download_planet import PLANET_KEY, STALE_DAYS, _age_days
@@ -36,6 +38,7 @@ LABELS = {
     "running": "Running",
     "failed": "Last run failed",
     "blocked": "Blocked by a prerequisite",
+    "purged": "Cleaned up: files removed",
 }
 
 
@@ -48,6 +51,32 @@ class StageStatus:
     @property
     def label(self) -> str:
         return LABELS[self.state]
+
+
+# What a stage produced as assets (types, per configuration or configuration independent) and, for the download
+# stages, what its approved run fetched: after a cleanup those files are gone although the rows (hashes,
+# fingerprints) stay, so "built from the current inputs" no longer means "present".
+OUTPUT_ASSETS = {
+    "extract-countries": (("country-pbf",), False),
+    "osm-extract": (("osm-pbf", "osm-core-pbf"), True),
+    "polygons": (("core-polygon", "overlap-polygon", "border-polygon"), True),
+    "border": (("region-outline", "border-crossings"), True),
+    "valhalla": (tuple(VALHALLA_ASSETS.values()), True),
+    "styles": (("style",), True),
+    "wof-patch": ((WOF_PATCH_ASSET,), False),
+    "pelias": (tuple(PELIAS_ASSETS.values()), True),
+    "pelias-interpolation": (tuple(INTERPOLATION_ASSETS.values()), True),
+}
+OUTPUT_DOWNLOADS = ("download-osm", "download-srtm", "download-pelias-data", "download-overture-gtfs")
+# What a stage reads: (asset type, configuration scoped, the stage that makes it again)
+INPUT_ASSETS = {
+    "osm-extract": (("country-pbf", False, "extract-countries"), ("overlap-polygon", True, "polygons"), ("carve-polygon", True, "polygons")),
+    "border": (("osm-pbf", True, "osm-extract"), ("osm-core-pbf", True, "osm-extract"), ("border-polygon", True, "polygons")),
+    "valhalla": (("osm-pbf", True, "osm-extract"),),
+    "pelias": (("osm-pbf", True, "osm-extract"), ("valhalla-polylines", True, "valhalla")),
+    "pelias-interpolation": (("osm-pbf", True, "osm-extract"), ("valhalla-polylines", True, "valhalla")),
+    "download-overture-gtfs": (("core-polygon", True, "polygons"), ("overlap-polygon", True, "polygons")),
+}
 
 
 def _latest_run(session: Session, key: str, config_id: int) -> BuildRun | None:
@@ -269,12 +298,22 @@ def _styles(session, config_id) -> StageStatus:
     return StageStatus("ok", "Style files match the Style tab.")
 
 
+def _results_purged(session, config_id: int) -> bool:
+    """A cleanup removed (part of) what a new package would be made from."""
+    from datamanager.services import packages
+
+    return any("removed by the cleanup" in p for p in packages.plan(session, config_id).problems)
+
+
 def _package(session, config_id) -> StageStatus:
     from datamanager.services import packages
 
     newest = packages.newest(session, config_id)
     if newest is None:
         return StageStatus("todo", "No package of this configuration yet.")
+    if _results_purged(session, config_id):
+        return StageStatus("purged", f"{newest.tag} holds the results, but their build files were removed by the cleanup: "
+                                     "build again before making a new package.")
     stale = packages.stale_parts(session, newest)
     tail = "" if newest.verified_at else " It is not verified yet."
     if stale:
@@ -290,6 +329,9 @@ def _package_verify(session, config_id) -> StageStatus:
         return StageStatus("blocked", "No package yet.")
     if newest.verified_at is None:
         return StageStatus("todo", f"{newest.tag} is not verified yet.")
+    if _results_purged(session, config_id):
+        return StageStatus("purged", f"{newest.tag} was verified {newest.verified_at:%Y-%m-%d %H:%M} UTC and its build files are cleaned up: "
+                                     "a new build starts a new package.")
     return StageStatus("ok", f"{newest.tag} verified {newest.verified_at:%Y-%m-%d %H:%M} UTC.")
 
 
@@ -301,8 +343,71 @@ def _cleanup(session, config_id) -> StageStatus:
         return StageStatus("blocked", "Needs a verified package.")
     last = _latest_run(session, "cleanup", config_id)
     if last is not None and last.status == "approved" and (last.params_json or {}).get("tag") == newest.tag:
+        if _results_purged(session, config_id):
+            return StageStatus("purged", f"Cleaned up after {newest.tag}: nothing left to remove until there is a new build.")
         return StageStatus("ok", f"Cleaned up after {newest.tag}.")
     return StageStatus("todo", f"Choose what to remove after {newest.tag}.")
+
+
+def _current_assets(session, config_id: int, types, scoped: bool) -> list[Asset]:
+    owner = Asset.config_profile_id == config_id if scoped else Asset.config_profile_id.is_(None)
+    rows = session.query(Asset).filter(owner, Asset.asset_type.in_(types), Asset.status == "approved").order_by(Asset.id).all()
+    return list({(a.asset_type, a.name): a for a in rows}.values())  # newest approved per type and name
+
+
+def _purge_note(purged: int, total: int, tags: set[str]) -> str:
+    where = f" (packaged in {', '.join(sorted(tags))})" if tags else ""
+    return f"{purged} of {total} results were removed by the cleanup{where}; run it again to rebuild them."
+
+
+def _own_purged(session, config_id: int, key: str) -> StageStatus | None:
+    """`purged` when the files this stage produced or fetched were removed by a cleanup."""
+    purged = total = 0
+    tags: set[str] = set()
+    if key in OUTPUT_ASSETS:
+        types, scoped = OUTPUT_ASSETS[key]
+        current = _current_assets(session, config_id, types, scoped)
+        total = len(current)
+        for asset in current:
+            if assets.is_purged(asset):
+                purged += 1
+                tags.add(asset.meta_json["purged"]["package"])
+    elif key in OUTPUT_DOWNLOADS:
+        run = (
+            session.query(BuildRun)
+            .filter(BuildRun.stage_key == key, BuildRun.config_profile_id == config_id, BuildRun.status == "approved")
+            .order_by(BuildRun.id.desc()).first()
+        )
+        if run is None:
+            return None
+        records = session.query(DownloadRecord).filter(DownloadRecord.id.in_((run.report_json or {}).get("record_ids", []))).all()
+        total = len(records)
+        for record in records:
+            if record.purged_at is not None:
+                purged += 1
+                tags.add(record.purged_package or "")
+        directory = (run.report_json or {}).get("summary", {}).get("directory")  # unpacked elevation tiles
+        if directory and not (Path(app_config.DATA_ROOT) / directory).exists():
+            note = "The unpacked elevation tiles were removed by the cleanup; run it again to unpack them."
+            return StageStatus("purged", note if purged == 0 else _purge_note(purged, total, tags) + " " + note)
+    elif key in ("download-planet", "download-tiles"):
+        record = downloads.resolve_version(session, PLANET_KEY if key == "download-planet" else TILES_KEY)
+        if record is not None and record.purged_at is not None:
+            purged, total, tags = 1, 1, {record.purged_package or ""}
+    tags.discard("")
+    if not purged:
+        return None
+    return StageStatus("purged", _purge_note(purged, total, tags))
+
+
+def _purged_input(session, config_id: int, key: str) -> str | None:
+    """Why a stage that has to run cannot: one of the files it reads was removed by a cleanup."""
+    for asset_type, scoped, producer in INPUT_ASSETS.get(key, ()):
+        gone = [a for a in _current_assets(session, config_id, (asset_type,), scoped) if assets.is_purged(a)]
+        if gone:
+            return (f"Input {asset_type} was removed by the cleanup (packaged in {gone[0].meta_json['purged']['package']}): "
+                    f"run {producer} again first.")
+    return None
 
 
 def _region_is_current(asset, plan) -> bool:
@@ -371,6 +476,10 @@ def compute(session: Session, config_id: int, resolved: dict, blocked: dict[str,
             result[key] = StageStatus("blocked", reason)
         else:
             status = build() or StageStatus("blocked", "Inputs are not ready.")
+            if status.state == "ok":
+                status = _own_purged(session, config_id, key) or status
+            if status.state in ("purged", "todo", "outdated") and (why := _purged_input(session, config_id, key)):
+                status = StageStatus("blocked", why)
             if run is not None and run.status == "failed" and status.state != "ok":
                 status = StageStatus("failed", f"Run {run.id}: {(run.error_message or 'failed')[:160]}", run.id)
             result[key] = status

@@ -143,7 +143,7 @@ class ValhallaStage(StageRunner):
     def _region(self, session, plan, region: RegionPlan, context, run_id: int, work: Path, out_root: Path, tz_file: Path, concurrency: int) -> dict:
         entry = {"name": region.name, "status": "success", "warnings": [], "tiles_wanted": len(region.tiles)}
         current = {k: assets.current(session, context.config_id, t, region.slug) for k, t in ASSET_TYPES.items()}
-        if all(a is not None and a.meta_json.get("fingerprint") == region.fingerprint for a in current.values()):
+        if all(a is not None and a.meta_json.get("fingerprint") == region.fingerprint and assets.usable(a) for a in current.values()):
             return {**entry, "result": "unchanged", "asset_ids": {k: a.id for k, a in current.items()},
                     **{k: current["tiles"].meta_json.get(k) for k in ("graph_tiles", "polyline_lines")}}
         started = time.monotonic()

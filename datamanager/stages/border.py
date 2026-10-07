@@ -182,7 +182,7 @@ class BorderStage(StageRunner):
             for suffix, source in (("core", region.core), ("extended", region.full)):
                 name = f"{region.slug}-{suffix}"
                 current = assets.current(session, context.config_id, "region-outline", name)
-                if current is not None and current.meta_json.get("fingerprint") == region.fingerprint:
+                if current is not None and current.meta_json.get("fingerprint") == region.fingerprint and assets.usable(current):
                     entry["files"].append({"name": name, "status": "unchanged", "asset_id": current.id})
                     continue
                 context.step_cb(f"{region.name}: {suffix} outline")
@@ -202,7 +202,7 @@ class BorderStage(StageRunner):
     def _pair(self, session, exe, pair: PairPlan, context, run_id: int, work: Path, out_dir: Path) -> dict:
         entry = {"name": pair.name, "from": pair.a.name, "to": pair.b.name, "status": "success", "warnings": []}
         current = assets.current(session, context.config_id, "border-crossings", pair.name)
-        if current is not None and current.meta_json.get("fingerprint") == pair.fingerprint:
+        if current is not None and current.meta_json.get("fingerprint") == pair.fingerprint and assets.usable(current):
             return {**entry, "result": "unchanged", "asset_id": current.id, "count": current.meta_json.get("count", 0),
                     "by_type": current.meta_json.get("by_type", {})}
         try:

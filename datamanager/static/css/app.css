@@ -127,10 +127,11 @@ dialog.modal select { display: block; width: 100%; margin-top: .25rem; }
 .stage-dot.dot-running { background: var(--accent); animation: stage-pulse 1.2s ease-in-out infinite; }
 .stage-dot.dot-failed { background: #c62828; }
 .stage-dot.dot-blocked { background: #8a94a3; }
+.stage-dot.dot-purged { background: #6b5b95; }
 @keyframes stage-pulse { 50% { opacity: .45; } }
 .stage-status { margin: .15rem 0 .4rem; font-size: .9rem; }
 .status-text-ok strong { color: #2e7d32; } .status-text-outdated strong { color: #e08a00; } .status-text-failed strong { color: #c62828; }
-.status-text-review strong { color: #b26a00; } .status-text-todo strong, .status-text-running strong { color: var(--accent); }
+.status-text-purged strong { color: #6b5b95; } .status-text-review strong { color: #b26a00; } .status-text-todo strong, .status-text-running strong { color: var(--accent); }
 .stage-legend { font-size: .85rem; }
 a.stage-dot { text-decoration: none; cursor: pointer; }
 a.stage-dot:hover { filter: brightness(1.15); box-shadow: 0 0 0 2px var(--border); }
