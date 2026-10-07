@@ -38,7 +38,7 @@ class PairPlan:
 
     @property
     def fingerprint(self) -> str:
-        return _hash([self.a.full.content_hash, self.a.core.content_hash, self.poly.content_hash, self.a.name, self.b.name])
+        return _hash([self.a.full.content_hash, self.a.core.content_hash, self.poly.content_hash, self.a.slug, self.b.slug])
 
 
 @dataclass
@@ -214,14 +214,14 @@ class BorderStage(StageRunner):
             context.step_cb(f"{pair.name}: border area")
             area = osmium.extract(exe, assets.input_path(pair.a.full), assets.input_path(pair.poly), work / f"{pair.name}.osm.pbf")
             context.step_cb(f"{pair.name}: crossings")
-            found = borders.detect(borders.roads(exe, area, work), borders.load_outline(outline_file), pair.a.name, pair.b.name)
+            found = borders.detect(borders.roads(exe, area, work), borders.load_outline(outline_file), pair.a.slug, pair.b.slug)
             target = borders.write_csv(out_dir / f"{pair.name}.csv", found)
             points = out_dir / f"{pair.name}.geojson"
             points.write_text(json.dumps(borders.crossings_geojson(found)), encoding="utf-8")
             by_type = dict(sorted(Counter(c.osm_type for c in found).items()))
             asset = assets.create(
                 session, run_id, context.config_id, "border-crossings", pair.name, target,
-                meta={"from": pair.a.name, "to": pair.b.name, "count": len(found), "by_type": by_type, "fingerprint": pair.fingerprint,
+                meta={"from": pair.a.slug, "to": pair.b.slug, "count": len(found), "by_type": by_type, "fingerprint": pair.fingerprint,
                       "geojson": str(points.resolve().relative_to(Path(config.DATA_ROOT).resolve()))},
             )
             entry.update(result="built", asset_id=asset.id, count=len(found), by_type=by_type, sha256=asset.content_hash)
