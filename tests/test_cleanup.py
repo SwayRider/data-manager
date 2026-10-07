@@ -68,6 +68,7 @@ def env(db_session, tmp_path, monkeypatch):
     _asset(s, cid, "overlap-polygon", "benelux-overlap", f"{a}/polygons/3/benelux-overlap.poly", b"poly2")
     s.commit()
     pm = _download(s, "tiles:planet", "downloads/tiles/planet/20261004T000000Z/p.pmtiles", b"PMTiles-fixture")
+    _download(s, "placeholder:store", "downloads/placeholder/store/20261005T000000Z/store.sqlite3.gz", b"placeholder")
     _download(s, "planet:osm", "downloads/planet/osm/20261001T000000Z/planet.pbf", b"planet-bytes")
     _download(s, "wof:be", "downloads/wof/be/20261001T000000Z/be.db", b"wofbe")
     s.commit()

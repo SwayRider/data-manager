@@ -57,9 +57,9 @@ def test_list_detail_labels_and_filters(client, package):
     assert package.tag in client.get("/repo/?class=valhalla").get_data(as_text=True)
     detail = client.get(f"/repo/{package.tag}").get_data(as_text=True)
     assert "valhalla_tiles.tar" in detail and "tool.valhalla" in detail and "Cleanup stage on Build" in detail and "unverified" in detail
-    client.post(f"/repo/{package.tag}/labels", data={"labels": "live=dev-mini", "note": "n1", "protected": "1"})
+    client.post(f"/repo/{package.tag}/labels", data={"labels": "for=dev-mini", "note": "n1", "protected": "1"})
     again = client.get(f"/repo/{package.tag}").get_data(as_text=True)
-    assert "live=dev-mini" in again and "protected" in again
+    assert "for=dev-mini" in again and "protected" in again
     assert client.post(f"/repo/{package.tag}/delete").status_code == 422
     assert client.get("/repo/r-nope").status_code == 404
 
@@ -145,7 +145,7 @@ def test_each_class_is_its_own_step_with_its_own_total(cfg):
     package = pk.create_package(SessionLocal(), cfg.id, ["valhalla", "geodata"], step=steps.append,
                                 progress=lambda d, t, m: calls.append((len(steps), d, t)))
     assert steps == ["Copy valhalla", "Copy geodata"]
-    by_class = {c: sum(i.size_bytes for i in package.items if i.class_ == c) for c in ("valhalla", "geodata")}
+    by_class = {c: sum(i.size_bytes for i in package.items if i.class_ == c and i.kind != "manifest") for c in ("valhalla", "geodata")}
     assert {t for n, d, t in calls if n == 1} == {by_class["valhalla"]} and {t for n, d, t in calls if n == 2} == {by_class["geodata"]}
 
 

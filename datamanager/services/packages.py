@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+import yaml
 from sqlalchemy.orm import Session
 
 from datamanager.config import config
@@ -30,6 +31,9 @@ CLASS_HELP = {
     "pelias": "Elasticsearch snapshot, pelias.json, WOF and interpolation databases per region",
     "geodata": "Region outlines and border crossings",
 }
+PLACEHOLDER_KEY = "placeholder:store"  # the approved Placeholder store download, shipped with the pelias class
+SNAPSHOT_META = ("index_name", "snapshot_name", "snapshot_repository", "docs")  # what a restore needs, from the snapshot asset
+LIVE_LABEL = "live"  # set by the deploy (value = deploy configuration key) on the packages that are current/previous somewhere
 CHUNK = 8 * 1024 * 1024
 FREE_SPACE_FACTOR = 1.05
 PROGRESS_EVERY = 1.0  # seconds between progress updates (every one is a DB commit)
@@ -106,9 +110,11 @@ def _asset_item(session: Session, config_id: int, class_: str, region: str | Non
                if asset_service.is_purged(asset) else f"is gone ({asset.path})")
         problems.append(f"{class_}: file of {asset_type} '{name}' {why}; rebuild the stage")
         return None
+    snapshot = ({k: asset.meta_json[k] for k in SNAPSHOT_META if asset.meta_json.get(k) is not None}
+                if asset_type == "pelias-index-snapshot" else {})
     return PlanItem(class_, region, f"{class_}/{dest}", source, source.stat().st_size, asset.content_hash,
                     asset_id=asset.id, meta={"asset_type": asset_type, "name": name, "run_id": asset.produced_by_run_id,
-                                             **(extra_meta or {})})
+                                             **snapshot, **(extra_meta or {})})
 
 
 def _tiles_schema_version(session: Session, record) -> str | None:
@@ -135,6 +141,22 @@ def _style_items(session: Session, config_id: int, problems: list[str]) -> list[
         if item:
             items.append(item)
     return items
+
+
+def _placeholder_item(session: Session, problems: list[str]) -> PlanItem | None:
+    """The Placeholder store (gzip, configuration independent): the deploy unpacks it into `placeholder/data/`."""
+    record = downloads.resolve_version(session, PLACEHOLDER_KEY)
+    if record is None or record.status != "approved":
+        problems.append(f"pelias: no approved {PLACEHOLDER_KEY} download")
+        return None
+    source = Path(config.DATA_ROOT) / record.local_path
+    if not source.exists():
+        why = (f"was removed by the cleanup (packaged in {record.purged_package})" if downloads.is_purged(record)
+               else f"is gone ({record.local_path})")
+        problems.append(f"pelias: the Placeholder store {why}; download it again")
+        return None
+    return PlanItem("pelias", None, "pelias/placeholder/store.sqlite3.gz", source, record.size_bytes, record.content_hash,
+                    download_id=record.id, meta={"source_key": record.source_key, "version": record.version_label})
 
 
 def _vendored_items() -> list[PlanItem]:
@@ -169,6 +191,8 @@ def plan(session: Session, config_id: int, classes: list[str] | None = None, che
                                        pattern.format(region=region), problems)
                     if item:
                         items.append(item)
+            if class_ == "pelias" and (placeholder := _placeholder_item(session, problems)):
+                items.append(placeholder)
         elif class_ == "geodata":
             for region in regions:
                 for kind in ("core", "extended"):
@@ -239,7 +263,7 @@ def tool_versions(session: Session) -> dict:
 # ---- creating ---------------------------------------------------------------------------------------------------
 
 # Tags the package writes itself: users can add labels but never set or overwrite these keys.
-RESERVED_KEYS = {"date", "config", "regions", "classes", "created_by", "source_runs", "tiles_build"}
+RESERVED_KEYS = {LIVE_LABEL, "date", "config", "regions", "classes", "created_by", "source_runs", "tiles_build"}
 RESERVED_PREFIXES = ("tool.", "resolved_hash.")
 
 
@@ -325,6 +349,7 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     session.add(package)
     session.commit()
 
+    started = _utcnow()
     last, done = 0.0, 0
     parts: list[dict] = []
     try:
@@ -350,7 +375,7 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
                               "size": item.size, "sha256": sha,
                               "source": {k: v for k, v in (("asset_id", item.asset_id), ("download_id", item.download_id)) if v},
                               "meta": item.meta})
-            parts += _generated_parts(class_, partial, tag, [p for p in parts if p["class"] == class_])
+            parts += _generated_parts(class_, partial, tag, [p for p in parts if p["class"] == class_], started)
         created_at = _utcnow()
         versions = tool_versions(session)
         tags = _auto_tags(config_row, the_plan, parts, created_by, created_at, versions)
@@ -411,11 +436,44 @@ def tiles_manifest(tag: str, parts: list[dict]) -> dict:
             "styles": listed}
 
 
-def _generated_parts(class_: str, partial: Path, tag: str, parts: list[dict]) -> list[dict]:
+def _md5_of(path: Path) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(CHUNK), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def geodata_manifest(partial: Path, tag: str, parts: list[dict], started: datetime.datetime,
+                     completed: datetime.datetime) -> dict:
+    """`manifest.yml` in the shape regionservice reads (legacy data-pipeline writer): per region the contour files,
+    shared the border crossings, every file with its md5. Paths are relative to the release folder."""
+    def entry(part: dict) -> dict:
+        rel = part["path"].removeprefix("geodata/")
+        return {"local-file": rel, "remote-file": rel, "hash-type": "md5", "hash": _md5_of(partial / part["path"])}
+
+    regions: dict[str, dict] = {}
+    crossings: dict[str, dict] = {}
+    for part in parts:
+        kind = part["meta"].get("asset_type")
+        if kind == "region-outline":
+            mode = "core" if part["meta"]["name"].endswith("-core") else "extended"
+            regions.setdefault(part["region"], {}).setdefault("contour", {})[mode] = entry(part)
+        elif kind == "border-crossings":
+            crossings[part["meta"]["name"]] = entry(part)
+    stamp = lambda moment: moment.strftime("%Y-%m-%dT%H:%M:%S.%f")  # noqa: E731
+    return {"path": ".", "tag": tag, "started-at": stamp(started), "completed-at": stamp(completed),
+            "regions": regions, "shared": {"border-crossings": crossings} if crossings else {}}
+
+
+def _generated_parts(class_: str, partial: Path, tag: str, parts: list[dict], started: datetime.datetime | None = None) -> list[dict]:
     """Files a class needs that no stage produces: written from what was just copied, hashed like the rest."""
     if class_ == "tiles":
         body = (json.dumps(tiles_manifest(tag, parts), indent=2, sort_keys=True) + "\n").encode()
         return [_write_generated(partial, "tiles/manifest.json", body, class_=class_)]
+    if class_ == "geodata":
+        document = geodata_manifest(partial, tag, parts, started or _utcnow(), _utcnow())
+        return [_write_generated(partial, "geodata/manifest.yml", yaml.safe_dump(document).encode(), class_=class_)]
     return []
 
 
@@ -532,10 +590,17 @@ def verify_package(session: Session, tag: str, progress: ProgressCb | None = Non
     return problems
 
 
+def deployed_to(package: Package) -> list[str]:
+    """Deploy configurations this package is the current or previous release of (label `live`, set by the deploy)."""
+    return sorted(l.value for l in package.labels if l.key == LIVE_LABEL)
+
+
 def delete(session: Session, tag: str) -> None:
     package = get(session, tag)
     if package.protected:
         raise PackageError(f"{tag} is protected")
+    if where := deployed_to(package):
+        raise PackageError(f"{tag} is deployed to {', '.join(where)}: roll forward first, then it can be deleted")
     shutil.rmtree(package.path, ignore_errors=True)
     session.delete(package)
     session.commit()
@@ -544,7 +609,7 @@ def delete(session: Session, tag: str) -> None:
 def prune(session: Session, keep: int, dry_run: bool = True) -> list[str]:
     """Delete the oldest complete, unprotected packages beyond the newest `keep`."""
     rows = session.query(Package).filter_by(status="complete").order_by(Package.id.desc()).all()
-    victims = [p.tag for p in rows[keep:] if not p.protected]
+    victims = [p.tag for p in rows[keep:] if not p.protected and not deployed_to(p)]
     if not dry_run:
         for tag in victims:
             delete(session, tag)

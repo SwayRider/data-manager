@@ -29,8 +29,8 @@ Classes are the unit a deploy config maps to a drive/target. Sources are existin
 |---|---|---|
 | `tiles` | `tiles.pmtiles`, `styles/…`, `glyphs/…`, `sprites/…`, tiles `manifest.json` (tilesservice contract in `SERVICES.md`) | download version `tiles:planet` (**a download record, not an asset** — see §7), `style` assets; glyphs/sprites: vendored in the app (`datamanager/blueprints/configure/static/map-assets`), `manifest.json`: generated at packaging |
 | `valhalla` | `valhalla_tiles.tar` (renamed from `tiles.tar`), `admin.sqlite`, `tz_world.sqlite` | `valhalla-tiles`, `valhalla-admin`, `valhalla-timezones` (`valhalla-polylines` is a pelias input; not shipped *(verify)*) |
-| `pelias` | ES snapshot, `pelias.json`, `wof/` (sqlite dir incl. patched DBs), `interpolation/{street.db,address.db}` | `pelias-index-snapshot`, `pelias-config`, `pelias-wof`, `pelias-interpolation-street-db`, `pelias-interpolation-address-db` |
-| `geodata` | `manifest.yml` (regionservice format, generated at packaging), contour GeoJSON, border-crossing CSVs | `region-outline`, `border-crossings` *(verify mapping of `region-outline` to the legacy contour files regionservice reads)* |
+| `pelias` | ES snapshot, `pelias.json`, `wof/` (sqlite dir incl. patched DBs), `interpolation/{street.db,address.db}`, the Placeholder store (once, not per region) | `pelias-index-snapshot` (part meta carries `index_name`, `snapshot_name`, `snapshot_repository`, `docs` for the restore), `pelias-config`, `pelias-wof`, `pelias-interpolation-street-db`, `pelias-interpolation-address-db`, download `placeholder:store` |
+| `geodata` | `manifest.yml` (regionservice format, generated at packaging: `regions.<r>.contour.{core,extended}` and `shared.border-crossings.<pair>`, each `{local-file, remote-file, hash-type: md5, hash}`, paths relative to the release), contour GeoJSON, border-crossing CSVs | `region-outline`, `border-crossings` *(open check before the first real geodata deploy: the manifest against regionservice's `internal/geodata/manifest.go`, notably the `path` field, which is `.`)* |
 
 A package may contain all classes or a subset (`package.json` lists them); a package of subset classes is valid, **but** packaging validates cross-class consistency when classes overlap: the same region set in `valhalla`, `pelias` and `geodata`, one configuration/resolved-hash, all source runs `approved` (only approved assets feed packages, as for stages).
 
@@ -44,7 +44,8 @@ A package may contain all classes or a subset (`package.json` lists them); a pac
   tiles/        tiles.pmtiles, manifest.json (generated), styles/<id>/<version>/{light,dark}.json, glyphs/<fontstack>/<range>.pbf, sprites/<name>[@2x].{json,png}  (plain files: the S3 release needs single objects)
   valhalla/<region>/  valhalla_tiles.tar, admin.sqlite, tz_world.sqlite
   pelias/<region>/    <region>.es-snapshot.tar, pelias.json, wof.tar.gz, interpolation/{street.db,address.db}
-  geodata/      contours/<region>-{core,extended}.geojson, border-crossings/<a>-<b>.csv   (manifest.yml for regionservice: not generated yet)
+  pelias/placeholder/ store.sqlite3.gz  (the deploy unpacks it to placeholder/data/store.sqlite3)
+  geodata/      contours/<region>-{core,extended}.geojson, border-crossings/<a>-<b>.csv   manifest.yml (generated)
 ```
 
 ### 2.3 `package.json` (schema 1)

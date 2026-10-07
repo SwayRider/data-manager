@@ -13,6 +13,7 @@ from datamanager.services import assets as asset_service
 from datamanager.services import packages
 
 STYLE_META = lambda name: {"style_id": "swayrider", "style_label": "SwayRider", "version": 3, "mode": name.removeprefix("style-")}  # noqa: E731
+SNAPSHOT_META = {"index_name": "pelias_benelux-29", "snapshot_name": "pelias_benelux-29", "snapshot_repository": "pelias_repo", "docs": 12}
 Env = namedtuple("Env", "session config_id repo")
 
 
@@ -50,7 +51,7 @@ def env(db_session, tmp_path, monkeypatch):
                     ("style", "style-light", "styles/6/style-light.json"),
                     ("style", "style-dark", "styles/6/style-dark.json")]:
         _asset(db_session, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode(),
-               meta=STYLE_META(n) if t == "style" else None)
+               meta=STYLE_META(n) if t == "style" else SNAPSHOT_META if t == "pelias-index-snapshot" else None)
     pm = Path(app_config.DATA_ROOT) / "downloads/tiles/planet/20261004T000000Z/20261004.pmtiles"
     pm.parent.mkdir(parents=True)
     pm.write_bytes(b"PMTiles-fixture")
@@ -58,6 +59,13 @@ def env(db_session, tmp_path, monkeypatch):
         source_key="tiles:planet", version_label="20261004T000000Z", url="http://x", filename=pm.name,
         local_path=str(pm.relative_to(app_config.DATA_ROOT)), size_bytes=pm.stat().st_size,
         content_hash=asset_service.sha256_of(pm), fetched_at=datetime.datetime(2026, 10, 4), status="approved"))
+    ph = Path(app_config.DATA_ROOT) / "downloads/placeholder/store/20261005T165647Z/store.sqlite3.gz"
+    ph.parent.mkdir(parents=True)
+    ph.write_bytes(b"placeholder-store")
+    db_session.add(DownloadRecord(
+        source_key="placeholder:store", version_label="20261005T165647Z", url="http://x", filename=ph.name,
+        local_path=str(ph.relative_to(app_config.DATA_ROOT)), size_bytes=ph.stat().st_size,
+        content_hash=asset_service.sha256_of(ph), fetched_at=datetime.datetime(2026, 10, 5), status="approved"))
     db_session.commit()
     return Env(db_session, cid, repo)
 
@@ -123,7 +131,7 @@ def test_free_space_check(env, monkeypatch):
 
 def test_reindex_rebuilds_rows_and_labels(env):
     pkg = packages.create_package(env.session, env.config_id, classes=["valhalla"], labels={"for": "q4"})
-    packages.edit_labels(env.session, pkg.tag, labels={"for": "q4", "live": "dev-mini"}, note="n", protected=True)
+    packages.edit_labels(env.session, pkg.tag, labels={"for": "q4", "promoted": "dev-mini"}, note="n", protected=True)
     tag = pkg.tag
     env.session.query(Package).delete()
     env.session.commit()
@@ -133,7 +141,7 @@ def test_reindex_rebuilds_rows_and_labels(env):
     assert result == {"added": 1, "updated": 0, "partials_removed": 1}
     again = packages.get(env.session, tag)
     assert again.protected and again.note == "n" and len(again.items) == 3
-    assert {(l.key, l.value) for l in again.labels if l.origin == "user"} == {("for", "q4"), ("live", "dev-mini")}
+    assert {(l.key, l.value) for l in again.labels if l.origin == "user"} == {("for", "q4"), ("promoted", "dev-mini")}
     assert any(l.key == "config" and l.origin == "auto" for l in again.labels)
 
 
@@ -184,3 +192,68 @@ def test_styles_without_a_release_version_block_the_tiles_class(env):
     env.session.commit()
     problems = packages.plan(env.session, env.config_id, ["tiles"]).problems
     assert any("no style id/version" in p for p in problems)
+
+
+def test_pelias_class_ships_the_placeholder_store_and_restore_names(env):
+    pkg = packages.create_package(env.session, env.config_id, ["pelias"])
+    folder = env.repo / pkg.tag
+    assert (folder / "pelias/placeholder/store.sqlite3.gz").read_bytes() == b"placeholder-store"
+    parts = {p["path"]: p for p in json.loads((folder / "package.json").read_text())["classes"]["pelias"]["parts"]}
+    assert parts["pelias/placeholder/store.sqlite3.gz"]["source"]["download_id"]
+    meta = parts["pelias/benelux/benelux.es-snapshot.tar"]["meta"]
+    assert (meta["index_name"], meta["snapshot_name"], meta["snapshot_repository"]) == ("pelias_benelux-29", "pelias_benelux-29", "pelias_repo")
+    assert packages.verify_package(env.session, pkg.tag) == []
+
+
+def test_missing_or_purged_placeholder_store_blocks_the_pelias_class(env):
+    record = env.session.query(DownloadRecord).filter_by(source_key="placeholder:store").one()
+    (Path(app_config.DATA_ROOT) / record.local_path).unlink()
+    assert any("Placeholder store is gone" in p for p in packages.plan(env.session, env.config_id, ["pelias"]).problems)
+    record.status = "rejected"
+    env.session.commit()
+    assert any("no approved placeholder:store" in p for p in packages.plan(env.session, env.config_id, ["pelias"]).problems)
+
+
+def test_geodata_class_ships_a_regionservice_manifest(env):
+    import hashlib
+
+    import yaml
+
+    pkg = packages.create_package(env.session, env.config_id, ["geodata"])
+    folder = env.repo / pkg.tag
+    doc = yaml.safe_load((folder / "geodata/manifest.yml").read_text())
+    assert doc["tag"] == pkg.tag and doc["started-at"] <= doc["completed-at"]
+    core = doc["regions"]["benelux"]["contour"]["core"]
+    assert core["local-file"] == core["remote-file"] == "contours/benelux-core.geojson" and core["hash-type"] == "md5"
+    assert core["hash"] == hashlib.md5((folder / "geodata/contours/benelux-core.geojson").read_bytes()).hexdigest()
+    assert set(doc["regions"]["benelux"]["contour"]) == {"core", "extended"} and doc["shared"] == {}
+    part = next(p for p in json.loads((folder / "package.json").read_text())["classes"]["geodata"]["parts"] if p["path"] == "geodata/manifest.yml")
+    assert part["kind"] == "manifest" and part["meta"]["generated"] is True
+    assert packages.verify_package(env.session, pkg.tag) == []
+
+
+def test_geodata_manifest_lists_border_crossings(tmp_path):
+    import datetime as dt
+
+    (tmp_path / "geodata/contours").mkdir(parents=True)
+    (tmp_path / "geodata/border-crossings").mkdir(parents=True)
+    parts = []
+    for rel, region, kind, name in [("geodata/contours/a-core.geojson", "a", "region-outline", "a-core"),
+                                    ("geodata/contours/a-extended.geojson", "a", "region-outline", "a-extended"),
+                                    ("geodata/border-crossings/a-b.csv", None, "border-crossings", "a-b")]:
+        (tmp_path / rel).write_text(rel)
+        parts.append({"path": rel, "region": region, "meta": {"asset_type": kind, "name": name}})
+    doc = packages.geodata_manifest(tmp_path, "r-1", parts, dt.datetime(2026, 1, 1), dt.datetime(2026, 1, 2))
+    assert doc["shared"]["border-crossings"]["a-b"]["remote-file"] == "border-crossings/a-b.csv"
+    assert doc["regions"]["a"]["contour"]["extended"]["local-file"] == "contours/a-extended.geojson"
+
+
+def test_deployed_packages_cannot_be_deleted_or_pruned(env):
+    tags = [packages.create_package(env.session, env.config_id, ["valhalla"]).tag for _ in range(3)]
+    env.session.add(PackageLabel(package_id=packages.get(env.session, tags[0]).id, key=packages.LIVE_LABEL, value="dev-mini", origin="auto"))
+    env.session.commit()
+    with pytest.raises(PackageError, match="deployed to dev-mini"):
+        packages.delete(env.session, tags[0])
+    assert packages.prune(env.session, keep=1) == [tags[1]]  # the deployed oldest one is skipped
+    with pytest.raises(PackageError, match="Reserved tag"):
+        packages.edit_labels(env.session, tags[1], labels={"live": "dev-mini"})
