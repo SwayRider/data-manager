@@ -18,9 +18,9 @@ from sqlalchemy.orm import Session
 
 from datamanager.config import config
 from datamanager.errors import PackageError
-from datamanager.models import Asset, ConfigProfile, Package, PackageItem, PackageLabel
+from datamanager.models import Asset, BuildRun, ConfigProfile, Package, PackageItem, PackageLabel
 from datamanager.services import assets as asset_service
-from datamanager.services import downloads, regions as region_service, resolve
+from datamanager.services import downloads, map_styles, regions as region_service, resolve
 
 CLASSES = ("tiles", "valhalla", "pelias", "geodata")
 SCHEMA = 1
@@ -94,7 +94,7 @@ def root() -> Path:
 # ---- planning ---------------------------------------------------------------------------------------------------
 
 def _asset_item(session: Session, config_id: int, class_: str, region: str | None, asset_type: str, name: str,
-                dest: str, problems: list[str], optional: bool = False) -> PlanItem | None:
+                dest: str, problems: list[str], optional: bool = False, extra_meta: dict | None = None) -> PlanItem | None:
     asset = asset_service.current(session, config_id, asset_type, name)
     if asset is None:
         if not optional:
@@ -102,10 +102,50 @@ def _asset_item(session: Session, config_id: int, class_: str, region: str | Non
         return None
     source = asset_service.abs_path(asset)
     if not source.exists():
-        problems.append(f"{class_}: file of {asset_type} '{name}' is gone ({asset.path}); rebuild the stage")
+        why = (f"was removed by the cleanup (packaged in {asset.meta_json['purged']['package']})"
+               if asset_service.is_purged(asset) else f"is gone ({asset.path})")
+        problems.append(f"{class_}: file of {asset_type} '{name}' {why}; rebuild the stage")
         return None
     return PlanItem(class_, region, f"{class_}/{dest}", source, source.stat().st_size, asset.content_hash,
-                    asset_id=asset.id, meta={"asset_type": asset_type, "name": name, "run_id": asset.produced_by_run_id})
+                    asset_id=asset.id, meta={"asset_type": asset_type, "name": name, "run_id": asset.produced_by_run_id,
+                                             **(extra_meta or {})})
+
+
+def _tiles_schema_version(session: Session, record) -> str | None:
+    run = session.get(BuildRun, record.run_id) if record.run_id else None
+    return ((run.report_json or {}).get("tiles") or {}).get("schema_version") if run else None
+
+
+def _style_items(session: Session, config_id: int, problems: list[str]) -> list[PlanItem]:
+    """The style pair at `styles/<id>/<version>/<mode>.json`; both files must come from one styles run."""
+    found = {mode: asset_service.current(session, config_id, "style", f"style-{mode}") for mode in ("light", "dark")}
+    if any(a is None for a in found.values()):
+        problems.append("tiles: no approved style-light/style-dark assets")
+        return []
+    ident = {(a.meta_json.get("style_id"), a.meta_json.get("version")) for a in found.values()}
+    if len(ident) != 1 or None in next(iter(ident)):
+        problems.append("tiles: the approved style files have no style id/version (made before release styles) or differ: run Styles again")
+        return []
+    (style_id, version), = ident
+    items = []
+    for mode, asset in found.items():
+        item = _asset_item(session, config_id, "tiles", None, "style", f"style-{mode}", f"styles/{style_id}/{version}/{mode}.json",
+                           problems, extra_meta={"style_id": style_id, "style_label": asset.meta_json.get("style_label"),
+                                                 "version": version, "mode": mode, "fingerprint": asset.meta_json.get("fingerprint")})
+        if item:
+            items.append(item)
+    return items
+
+
+def _vendored_items() -> list[PlanItem]:
+    """Glyphs and sprite sheets the styles refer to: vendored in the app (`map_styles.MAP_ASSETS`), shipped as plain files."""
+    items = []
+    for sub_dir, dest in (("fonts", "glyphs"), ("sprites", "sprites")):
+        base = map_styles.MAP_ASSETS / sub_dir
+        for file in sorted(p for p in base.rglob("*") if p.is_file()) if base.is_dir() else []:
+            items.append(PlanItem("tiles", None, f"tiles/{dest}/{file.relative_to(base).as_posix()}", file, file.stat().st_size, None,
+                                  meta={"vendor": "protomaps/basemaps-assets"}))
+    return items
 
 
 def plan(session: Session, config_id: int, classes: list[str] | None = None, check_status: bool = False) -> Plan:
@@ -155,16 +195,17 @@ def plan(session: Session, config_id: int, classes: list[str] | None = None, che
             else:
                 source = Path(config.DATA_ROOT) / record.local_path
                 if not source.exists():
-                    problems.append(f"tiles: planet file is gone ({record.local_path}); download it again")
+                    why = (f"was removed by the cleanup (packaged in {record.purged_package})" if downloads.is_purged(record)
+                           else f"is gone ({record.local_path})")
+                    problems.append(f"tiles: planet file {why}; download it again")
                 else:
                     items.append(PlanItem("tiles", None, "tiles/tiles.pmtiles", source, record.size_bytes,
                                           record.content_hash, download_id=record.id,
                                           meta={"source_key": record.source_key, "version": record.version_label,
-                                                "data_timestamp": record.data_timestamp}))
-            for name in ("style-light", "style-dark"):
-                item = _asset_item(session, config_id, class_, None, "style", name, f"styles/{name}.json", problems)
-                if item:
-                    items.append(item)
+                                                "data_timestamp": record.data_timestamp,
+                                                "schema_version": _tiles_schema_version(session, record)}))
+            items += _style_items(session, config_id, problems)
+            items += _vendored_items()
     if check_status:
         problems += _unsettled(session, config_id, resolved, classes)
     return Plan(items, problems, regions, {r.name.lower(): r.hash for r in resolved.regions})
@@ -309,6 +350,7 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
                               "size": item.size, "sha256": sha,
                               "source": {k: v for k, v in (("asset_id", item.asset_id), ("download_id", item.download_id)) if v},
                               "meta": item.meta})
+            parts += _generated_parts(class_, partial, tag, [p for p in parts if p["class"] == class_])
         created_at = _utcnow()
         versions = tool_versions(session)
         tags = _auto_tags(config_row, the_plan, parts, created_by, created_at, versions)
@@ -338,6 +380,43 @@ def create_package(session: Session, config_id: int, classes: list[str] | None =
     session.commit()
     _write_labels_file(package)
     return package
+
+
+def _write_generated(partial: Path, rel: str, content: bytes, meta: dict | None = None, class_: str = "") -> dict:
+    target = partial / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    return {"class": class_, "region": None, "path": rel, "kind": "manifest", "size": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(), "source": {}, "meta": {"generated": True, **(meta or {})}}
+
+
+def tiles_manifest(tag: str, parts: list[dict]) -> dict:
+    """`manifest.json` of the tiles release (`SERVICES.md`): the tileset and the styles with their versions."""
+    planet = next((p["meta"] for p in parts if p["path"] == "tiles/tiles.pmtiles"), {})
+    stamp = str(planet.get("data_timestamp") or planet.get("version") or "")
+    date = f"{stamp[:4]}-{stamp[4:6]}-{stamp[6:8]}" if stamp[:8].isdigit() else stamp[:10]
+    styles: dict[str, dict] = {}
+    for p in parts:
+        meta = p["meta"]
+        if meta.get("asset_type") == "style":
+            entry = styles.setdefault(meta["style_id"], {"id": meta["style_id"], "label": meta.get("style_label") or meta["style_id"],
+                                                         "version": str(meta["version"]), "variants": {}})
+            entry["variants"][meta["mode"]] = p["path"].removeprefix("tiles/")
+    listed = list(styles.values())
+    if listed:
+        listed[0]["default"] = True
+    return {"schema": 1, "release": tag,
+            "tileset": {"name": "planet", "build": date.replace("-", ""), "date": date,
+                        "schema_version": planet.get("schema_version"), "file": "tiles.pmtiles"},
+            "styles": listed}
+
+
+def _generated_parts(class_: str, partial: Path, tag: str, parts: list[dict]) -> list[dict]:
+    """Files a class needs that no stage produces: written from what was just copied, hashed like the rest."""
+    if class_ == "tiles":
+        body = (json.dumps(tiles_manifest(tag, parts), indent=2, sort_keys=True) + "\n").encode()
+        return [_write_generated(partial, "tiles/manifest.json", body, class_=class_)]
+    return []
 
 
 def _auto_tags(config_row, the_plan: Plan, parts: list[dict], created_by: str, created_at: datetime.datetime,

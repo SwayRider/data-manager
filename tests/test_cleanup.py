@@ -11,16 +11,17 @@ from datamanager.services import assets as asset_service
 from datamanager.services import cleanup, downloads, packages
 from datamanager.services import settings as settings_service
 
+STYLE_META = lambda name: {"style_id": "swayrider", "style_label": "SwayRider", "version": 3, "mode": name.removeprefix("style-")}  # noqa: E731
 Env = namedtuple("Env", "session config_id tag repo")
 DATA = lambda rel: Path(app_config.DATA_ROOT) / rel  # noqa: E731
 
 
-def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved", run_id=None):
+def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved", run_id=None, meta=None):
     file = DATA(rel)
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_bytes(content)
     asset = Asset(asset_type=asset_type, name=name, config_profile_id=config_id, path=rel, produced_by_run_id=run_id,
-                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status)
+                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status, meta_json=meta or {})
     session.add(asset)
     session.flush()
     return asset
@@ -59,7 +60,7 @@ def env(db_session, tmp_path, monkeypatch):
                     ("region-outline", "benelux-core", "border/8/benelux-core.geojson"),
                     ("region-outline", "benelux-extended", "border/8/benelux-extended.geojson"),
                     ("style", "style-light", "styles/6/style-light.json"), ("style", "style-dark", "styles/6/style-dark.json")]:
-        _asset(s, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode())
+        _asset(s, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode(), meta=STYLE_META(n) if t == "style" else None)
     # superseded snapshot of an older run, intermediates that no package holds, and user input
     _asset(s, cid, "pelias-index-snapshot", "benelux", f"{a}/pelias/23/benelux/benelux.es-snapshot.tar", b"old-snapshot-23!")
     _asset(s, None, "country-pbf", "belgium", f"{a}/country-pbf/5/belgium.osm.pbf", b"belgium-pbf")
@@ -111,7 +112,7 @@ def test_apply_purges_files_but_keeps_rows_and_current_assets(env):
     snap = asset_service.current(env.session, env.config_id, "pelias-index-snapshot", "benelux")
     assert snap is not None and asset_service.is_purged(snap) and not asset_service.abs_path(snap).exists()
     assert snap.meta_json["purged"]["package"] == env.tag and snap.content_hash
-    assert asset_service.usable(snap)
+    assert not asset_service.usable(snap)  # a purged result is rebuilt, never skipped
     assert DATA("library/assets/polygons/3/carve-be.poly").exists()  # carve-outs are never offered
     overlap = env.session.query(Asset).filter_by(asset_type="overlap-polygon").one()
     assert asset_service.is_purged(overlap) and not DATA(overlap.path).exists()
@@ -184,3 +185,48 @@ def test_old_versions_are_deleted_not_purged(env):
     assert plan.items and all(i.kind == "delete-download" for i in plan.items)
     cleanup.apply(env.session, env.tag, ["old_versions"])
     assert env.session.query(DownloadRecord).filter(DownloadRecord.source_key == "gtfs:x").count() == 2  # newest two stay
+
+
+def test_build_status_shows_purged_results_not_up_to_date(env):
+    from datamanager.stages import status as stage_status
+
+    _verified(env)
+    assert stage_status._own_purged(env.session, env.config_id, "pelias") is None  # files still there
+    cleanup.apply(env.session, env.tag, ["pelias_snapshots", "country_pbf", "small_assets", "valhalla"])
+    for key in ("pelias", "valhalla", "styles", "extract-countries"):
+        state = stage_status._own_purged(env.session, env.config_id, key)
+        assert state is not None and state.state == "purged" and env.tag in state.detail, key
+    assert stage_status._own_purged(env.session, env.config_id, "osm-extract") is None  # nothing of it was removed
+    assert stage_status._own_purged(env.session, env.config_id, "no-such-stage") is None
+
+
+def test_stage_with_a_cleaned_up_input_is_blocked_with_the_producer(env):
+    from datamanager.stages import status as stage_status
+
+    _verified(env)
+    assert stage_status._purged_input(env.session, env.config_id, "osm-extract") is None
+    cleanup.apply(env.session, env.tag, ["country_pbf"])
+    reason = stage_status._purged_input(env.session, env.config_id, "osm-extract")
+    assert "country-pbf" in reason and "extract-countries" in reason and env.tag in reason
+    assert stage_status._purged_input(env.session, env.config_id, "valhalla") is None
+
+
+def test_new_package_is_refused_while_results_are_cleaned_up(env):
+    _verified(env)
+    cleanup.apply(env.session, env.tag, ["valhalla"])
+    problems = packages.plan(env.session, env.config_id, ["valhalla"]).problems
+    assert problems and all("removed by the cleanup" in p for p in problems)
+
+
+def test_package_verify_and_cleanup_are_not_green_once_the_results_are_cleaned_up(env):
+    from datamanager.stages import status as stage_status
+
+    _verified(env)
+    assert stage_status._package(env.session, env.config_id).state == "ok"
+    assert stage_status._package_verify(env.session, env.config_id).state == "ok"
+    cleanup.apply(env.session, env.tag, ["valhalla", "pelias_snapshots"])
+    env.session.add(BuildRun(stage_key="cleanup", config_profile_id=env.config_id, status="approved", params_json={"tag": env.tag}))
+    env.session.flush()
+    for fn in (stage_status._package, stage_status._package_verify, stage_status._cleanup):
+        state = fn(env.session, env.config_id)
+        assert state.state == "purged" and env.tag in state.detail, fn.__name__

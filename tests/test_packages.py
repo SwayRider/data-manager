@@ -12,15 +12,16 @@ from datamanager.models import Asset, ConfigProfile, DownloadRecord, Package, Pa
 from datamanager.services import assets as asset_service
 from datamanager.services import packages
 
+STYLE_META = lambda name: {"style_id": "swayrider", "style_label": "SwayRider", "version": 3, "mode": name.removeprefix("style-")}  # noqa: E731
 Env = namedtuple("Env", "session config_id repo")
 
 
-def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved"):
+def _asset(session, config_id, asset_type, name, rel, content=b"x", status="approved", meta=None):
     file = Path(app_config.DATA_ROOT) / rel
     file.parent.mkdir(parents=True, exist_ok=True)
     file.write_bytes(content)
     asset = Asset(asset_type=asset_type, name=name, config_profile_id=config_id, path=rel,
-                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status)
+                  content_hash=asset_service.sha256_of(file), size_bytes=len(content), status=status, meta_json=meta or {})
     session.add(asset)
     session.commit()
     return asset
@@ -48,7 +49,8 @@ def env(db_session, tmp_path, monkeypatch):
                     ("region-outline", "benelux-extended", "border/8/benelux-extended.geojson"),
                     ("style", "style-light", "styles/6/style-light.json"),
                     ("style", "style-dark", "styles/6/style-dark.json")]:
-        _asset(db_session, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode())
+        _asset(db_session, cid, t, n, f"{a}/{f}", content=f"{t}:{n}".encode(),
+               meta=STYLE_META(n) if t == "style" else None)
     pm = Path(app_config.DATA_ROOT) / "downloads/tiles/planet/20261004T000000Z/20261004.pmtiles"
     pm.parent.mkdir(parents=True)
     pm.write_bytes(b"PMTiles-fixture")
@@ -157,3 +159,28 @@ def test_reserved_tag_keys_are_rejected_as_labels(env):
         packages.edit_labels(env.session, pkg.tag, labels={"config": "other"})
     auto = {l.key: l.value for l in pkg.labels if l.origin == "auto"}
     assert auto["config"] == "dev-mini" and len(auto["date"]) == 10
+
+
+def test_tiles_class_ships_styles_glyphs_sprites_and_a_manifest(env):
+    pkg = packages.create_package(env.session, env.config_id, ["tiles"])
+    folder = env.repo / pkg.tag
+    assert (folder / "tiles/styles/swayrider/3/light.json").read_bytes() == b"style:style-light"
+    assert (folder / "tiles/styles/swayrider/3/dark.json").exists()
+    assert (folder / "tiles/glyphs/Noto Sans Regular/0-255.pbf").exists() and (folder / "tiles/sprites/light@2x.png").exists()
+    manifest = json.loads((folder / "tiles/manifest.json").read_text())
+    assert manifest["schema"] == 1 and manifest["release"] == pkg.tag
+    assert manifest["tileset"] == {"name": "planet", "build": "20261004", "date": "2026-10-04", "schema_version": None, "file": "tiles.pmtiles"}
+    assert manifest["styles"] == [{"id": "swayrider", "label": "SwayRider", "version": "3", "default": True,
+                                   "variants": {"light": "styles/swayrider/3/light.json", "dark": "styles/swayrider/3/dark.json"}}]
+    doc = json.loads((folder / "package.json").read_text())
+    part = next(p for p in doc["classes"]["tiles"]["parts"] if p["path"] == "tiles/manifest.json")
+    assert part["kind"] == "manifest" and part["meta"]["generated"] is True
+    assert packages.verify_package(env.session, pkg.tag) == []  # generated and vendored parts are hashed like the rest
+
+
+def test_styles_without_a_release_version_block_the_tiles_class(env):
+    for a in env.session.query(Asset).filter_by(asset_type="style"):
+        a.meta_json = {}
+    env.session.commit()
+    problems = packages.plan(env.session, env.config_id, ["tiles"]).problems
+    assert any("no style id/version" in p for p in problems)

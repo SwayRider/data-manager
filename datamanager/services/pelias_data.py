@@ -24,6 +24,7 @@ from datamanager.services.valhalla_build import run as run_command
 IMPORTERS = ("schema", "whosonfirst", "geonames", "openaddresses", "openstreetmap", "polylines", "csv-importer", "transit")
 OPTIONAL_IMPORTERS = ("csv-importer", "transit")  # their failure is a warning: Overture and GTFS never fail a region
 OVERTURE_FILES = {"places": "overture-places.csv", "addresses": "overture-addresses.csv"}
+INTERPOLATION_PORT = 4300
 PROD_WOF_PATH = "/data/whosonfirst"
 PLACEHOLDER_URL = "http://pelias-placeholder:3000"
 LIBPOSTAL_URL = "http://pelias-libpostal:4400"
@@ -179,7 +180,9 @@ def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof
                      "hosts": [{"env": "development", "protocol": "http", "host": es_host, "port": es_port}],
                      "log": [{"type": "stdio", "json": False, "level": ["error", "warning"]}]},
         "elasticsearch": {"settings": {"index": {"number_of_replicas": "0", "number_of_shards": "1", "refresh_interval": "1m"}}},
-        "interpolation": {"client": {"adapter": "null"}},
+        # the deployed API asks the per-region interpolation service (street.db/address.db); the import has none
+        "interpolation": {"client": {"adapter": "http", "host": f"http://pelias-{layout.slug}-interpolation:{INTERPOLATION_PORT}"}
+                          if prod else {"adapter": "null"}},
         "dbclient": {"statFrequency": 10000, "batchSize": 500},
         "api": {
             "accessLog": "common", "indexName": index,
