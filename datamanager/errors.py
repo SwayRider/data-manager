@@ -73,6 +73,12 @@ class UnresolvedDependencyError(DataManagerError):
     error_type = "UnresolvedDependencyError"
 
 
+class DeployError(DataManagerError):
+    """A deploy, activation or rollback failed (bad config, no space, hash mismatch, health check)."""
+
+    error_type = "DeployError"
+
+
 class PackageError(DataManagerError):
     """Packaging or verifying a package failed (missing input, no space, hash mismatch)."""
 
