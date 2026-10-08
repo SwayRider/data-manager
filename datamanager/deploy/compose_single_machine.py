@@ -18,6 +18,7 @@ from pathlib import Path
 
 from datamanager.deploy.base import (ACTIVATORS, ActivationContext, Activator, DeployDriver, PackageView, PartView,
                                      ProgressCb, StepCb)
+from datamanager.deploy import activators  # noqa: F401  (registers the activator types)
 from datamanager.deploy.registry import register
 from datamanager.errors import DeployError
 
@@ -151,8 +152,10 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     def _context(self, class_: str, tag: str) -> ActivationContext:
         settings = self._activator(class_)[1]
-        return ActivationContext(class_, tag, self.root(class_), self.regions_of(class_, tag), settings,
-                                 {**self._block(class_), **self.options})
+        root = self.root(class_)
+        kept = tuple(sorted({self._pointer(root, "current"), self._pointer(root, "previous")} - {None}))
+        return ActivationContext(class_, tag, root, self.regions_of(class_, tag), settings,
+                                 {**self._block(class_), **self.options}, kept)
 
     # ---- state on the target ------------------------------------------------------------------------------------
 

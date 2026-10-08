@@ -49,6 +49,7 @@ class ActivationContext:
     regions: tuple[str, ...]  # regions of this release
     settings: dict  # the `activate` block of the deploy configuration
     options: dict  # the class block and the deploy settings (health timeout, ...)
+    kept: tuple[str, ...] = ()  # releases that stay on the target (current, previous): never touch what they use
 
 
 class Activator(ABC):
