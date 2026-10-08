@@ -4,3 +4,4 @@ __pycache__/
 .env
 data/
 .pytest_cache/
+deploy-configs/*.local.json
