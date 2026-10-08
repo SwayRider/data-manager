@@ -195,3 +195,42 @@ def test_ensure_starts_release_independent_services_without_recreating_them(tmp_
     fake_docker.calls.clear()
     ComposeRestart().activate(_ctx(tmp_path, regions=("benelux",), settings={"ensure": ["x"], "services": {"benelux": "c"}}))
     assert fake_docker.restarted() == ["c"] and not [c for c in fake_docker.calls if c[0] == "compose"]  # no compose file: nothing to ensure
+
+
+def _driver(tmp_path, **extra):
+    config = {"host": None, "classes": {"geodata": {"root": str(tmp_path / "g"), "activate": {
+        "type": "compose-restart", "compose_file": "/infra/l20.yml", "services": {"all": "regionservice"},
+        "ensure_after": {"compose_file": "/infra/l20.yml", "services": ["routerservice"]}}}}, **extra}
+    return ComposeSingleMachineDriver(config, {"health_timeout": 0.05})
+
+
+def test_base_services_are_ensured_first_and_supporting_services_after(tmp_path, fake_docker):
+    driver = _driver(tmp_path, ensure={"compose_file": "/infra/l20.yml", "services": ["authservice", "mailservice"]})
+    assert driver.ensure_base() == []
+    assert [c[-1] for c in fake_docker.calls if "up" in c] == ["authservice", "mailservice"]
+    fake_docker.calls.clear()
+    result = driver.deploy_class(make_package(tmp_path, "r-1"), "geodata")
+    up = [(c[-1], "--force-recreate" in c) for c in fake_docker.calls if c[0] == "compose" and "up" in c]
+    assert up == [("regionservice", True), ("routerservice", False)]  # the class first, then what depends on it, never recreated
+    assert result["warnings"] == []
+
+
+def test_a_supporting_service_that_does_not_start_is_a_warning_not_a_failure(tmp_path, monkeypatch, fake_docker):
+    real = docker.compose_ensure
+
+    def failing(compose_file, service):
+        if service in ("mailservice", "routerservice"):
+            raise DeployError("no such image")
+        real(compose_file, service)
+    monkeypatch.setattr(docker, "compose_ensure", failing)
+    driver = _driver(tmp_path, ensure={"compose_file": "/infra/l20.yml", "services": ["authservice", "mailservice"]})
+    assert driver.ensure_base() == ["mailservice did not start: no such image"]
+    result = driver.deploy_class(make_package(tmp_path, "r-1"), "geodata")
+    assert result["status"] == "ok" and result["warnings"] == ["routerservice did not start: no such image"]
+    assert (tmp_path / "g/current").is_symlink()
+
+
+def test_ensure_blocks_are_validated():
+    bad = {"ensure": {"services": ["a"]}, "classes": {"geodata": {"root": "/g", "activate": {"type": "none", "ensure_after": ["x"]}}}}
+    text = " | ".join(ComposeSingleMachineDriver.validate_config(bad))
+    assert "ensure:" in text and "ensure_after" in text

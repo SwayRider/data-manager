@@ -108,6 +108,15 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     # ---- configuration ------------------------------------------------------------------------------------------
 
+    def ensure_base(self, step: StepCb | None = None) -> list[str]:
+        """Services no release depends on (auth, mail, ...): started when missing, never recreated. Warnings, not errors."""
+        block = self.config.get("ensure") or {}
+        if not block.get("services"):
+            return []
+        if step:
+            step("Ensure base services")
+        return activators.ensure_services(block.get("compose_file"), block["services"])
+
     @classmethod
     def validate_config(cls, config: dict) -> list[str]:
         problems = []
@@ -130,9 +139,16 @@ class ComposeSingleMachineDriver(DeployDriver):
                 problems.append(f"classes.{name}.root: an absolute path is required")
             if name == "pelias" and not os.path.isabs(str((block or {}).get("es_snapshots") or "")):
                 problems.append("classes.pelias.es_snapshots: an absolute path is required")
-            kind = ((block or {}).get("activate") or {"type": "none"}).get("type")
-            if kind not in ACTIVATORS:
-                problems.append(f"classes.{name}.activate.type: unknown '{kind}'")
+            activate = (block or {}).get("activate") or {"type": "none"}
+            if activate.get("type") not in ACTIVATORS:
+                problems.append(f"classes.{name}.activate.type: unknown '{activate.get('type')}'")
+            after = activate.get("ensure_after")
+            if after is not None and not (isinstance(after, dict) and isinstance(after.get("services"), list)):
+                problems.append(f"classes.{name}.activate.ensure_after: {{\"compose_file\": ..., \"services\": [...]}} is required")
+        ensure = config.get("ensure")
+        if ensure is not None and not (isinstance(ensure, dict) and isinstance(ensure.get("services"), list)
+                                       and (not ensure["services"] or os.path.isabs(str(ensure.get("compose_file") or "")))):
+            problems.append("ensure: {\"compose_file\": <absolute path>, \"services\": [...]} is required")
         order = config.get("activation_order")
         if order is not None and (not isinstance(order, list) or not set(order) <= set(classes)):
             problems.append("activation_order: must list configured classes only")
@@ -454,11 +470,11 @@ class ComposeSingleMachineDriver(DeployDriver):
                     pass
             raise DeployError(f"{class_}: activation of {tag} failed ({exc}); "
                               + (f"switched back to {before['current']}" if before["current"] else "nothing was live before")) from exc
-        warnings = []
+        warnings = activators.ensure_after(self._block(class_).get("activate") or {})
         try:
             removed = self.prune_class(class_)
         except Exception as exc:  # the deploy itself succeeded
-            removed, warnings = [], [f"cleanup of old releases failed: {exc}"]
+            removed, warnings = [], warnings + [f"cleanup of old releases failed: {exc}"]
         return {"class": class_, "status": "ok", "current": tag, "previous": old_current, "removed": removed,
                 "warnings": warnings}
 

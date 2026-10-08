@@ -35,6 +35,26 @@ def _ensure(ctx: ActivationContext) -> None:
             docker.compose_ensure(compose, name)
 
 
+def ensure_services(compose_file: str | None, names: list[str]) -> list[str]:
+    """Start supporting services that must run but whose failure does not make the data wrong (authservice, the router
+    that uses Valhalla, ...). Returns warnings instead of raising."""
+    warnings = []
+    for name in names:
+        try:
+            docker.compose_ensure(compose_file, name)
+        except DeployError as exc:
+            warnings.append(f"{name} did not start: {exc.message}")
+    return warnings
+
+
+def ensure_after(settings: dict) -> list[str]:
+    """`ensure_after` of an activate block: services that depend on this class (often in another compose file), started
+    once it is healthy: {"compose_file": "<path>", "services": [...]}; the compose file defaults to the block's own."""
+    block = settings.get("ensure_after") or {}
+    compose = block.get("compose_file") or settings.get("compose_file")
+    return ensure_services(compose, block.get("services", [])) if compose else []
+
+
 def _containers(ctx: ActivationContext, names: list[str]) -> list[str]:
     compose = ctx.settings.get("compose_file")
     return [docker.compose_container(compose, n) for n in names] if compose else names

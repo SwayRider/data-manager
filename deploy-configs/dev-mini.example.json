@@ -1,4 +1,12 @@
 {
+  "ensure": {
+    "compose_file": "/path/to/infra/dev-mini/layer-20/compose.yml",
+    "services": [
+      "authservice",
+      "swayrider-api-register",
+      "mailservice"
+    ]
+  },
   "driver": "compose-single-machine",
   "host": null,
   "activation_order": [
@@ -27,6 +35,12 @@
           "benelux": "valhalla-benelux",
           "france": "valhalla-france",
           "germany": "valhalla-germany"
+        },
+        "ensure_after": {
+          "compose_file": "/path/to/infra/dev-mini/layer-20/compose.yml",
+          "services": [
+            "routerservice"
+          ]
         }
       }
     },
@@ -49,7 +63,13 @@
         },
         "ensure": [
           "pelias-libpostal"
-        ]
+        ],
+        "ensure_after": {
+          "compose_file": "/path/to/infra/dev-mini/layer-20/compose.yml",
+          "services": [
+            "searchservice"
+          ]
+        }
       }
     },
     "tiles": {

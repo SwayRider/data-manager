@@ -306,11 +306,13 @@ class TilesTransport:
                     pass
             raise DeployError(f"tiles: activation of {tag} failed ({exc}); "
                               + (f"switched back to {before['current']}" if before["current"] else "nothing was live before")) from exc
-        warnings = []
+        from datamanager.deploy import activators
+
+        warnings = activators.ensure_after(self.block.get("activate") or {})
         try:
             removed = self.prune_class()
         except Exception as exc:
-            removed, warnings = [], [f"cleanup of old releases failed: {exc}"]
+            removed, warnings = [], warnings + [f"cleanup of old releases failed: {exc}"]
         return {"class": "tiles", "status": "ok", "current": tag, "previous": before["current"], "removed": removed,
                 "warnings": warnings}
 

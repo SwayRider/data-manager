@@ -181,6 +181,9 @@ def run(session: Session, config_key: str, package_ref: str | None, classes: lis
     session.add(deployment)
     session.commit()
     detail = {"classes": {}}
+    base_warnings = driver.ensure_base(step)
+    if base_warnings:
+        detail["warnings"] = base_warnings
     try:
         for name in order:
             if step:
