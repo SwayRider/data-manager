@@ -5,7 +5,7 @@ Everything is laid out below one directory per region (`Layout`) in the shape th
     wof/sqlite/whosonfirst-data-{admin,postalcode}-<cc>-latest.db   (WOF bundles unpacked, or the patched database)
     geonames/<cc>/<CC>.zip                                          (re-zipped: the original is not always readable)
     openaddresses/<source>.geojson                                  (gunzipped job output, as the importer's downloader does)
-    osm/<slug>.osm.pbf, polylines/polylines.0sv.gz                  (links to the approved assets)
+    osm/<slug>.osm.pbf (link), polylines/polylines.0sv (gunzipped: the importer does not)
 
 The importers run from the cloned repositories (`pelias_build.repo_dir`) with `PELIAS_CONFIG` set; a configuration has no
 token because everything is downloaded already."""
@@ -162,7 +162,7 @@ def prepare(layout: Layout, countries: list[CountryData], openaddresses: dict[st
     for theme, file in (overture or {}).items():
         _link(file, layout.csv / OVERTURE_FILES[theme])
     _link(pbf, layout.osm / layout.pbf_name)
-    _link(polylines, layout.polylines / "polylines.0sv.gz")
+    gunzip(polylines, layout.polylines / "polylines.0sv")  # the polylines importer reads the file as plain text, it does not gunzip
     for directory in (layout.leveldb, layout.csv, layout.transit, layout.configs, layout.logs):
         directory.mkdir(parents=True, exist_ok=True)
     return {"countries": len(countries), "openaddresses_files": len(openaddresses), "overture_files": len(overture or {})}
@@ -213,7 +213,7 @@ def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof
             "openstreetmap": {"datapath": str(layout.osm), "leveldbpath": str(layout.leveldb), "removeDisusedVenues": True,
                               "import": [{"filename": layout.pbf_name}]},
             "openaddresses": {"datapath": str(layout.openaddresses), "files": openaddresses},
-            "polyline": {"datapath": str(layout.polylines), "files": ["polylines.0sv.gz"]},
+            "polyline": {"datapath": str(layout.polylines), "files": ["polylines.0sv"]},
             "whosonfirst": {"datapath": wof_path, "importPostalcodes": True, "countryCode": wof_codes},
             "transit": {"datapath": str(layout.transit), "feeds": transit_feeds or []},
         },

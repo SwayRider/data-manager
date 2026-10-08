@@ -218,7 +218,7 @@ def test_imports_in_order_with_laid_out_data_and_removes_the_container(cfg, env)
     layout = (env.calls_dir / "layout.txt").read_text()
     for part in ("wof/sqlite/whosonfirst-data-admin-aa-latest.db", "wof/sqlite/whosonfirst-data-admin-bb-latest.db",
                  "wof/sqlite/whosonfirst-data-postalcode-aa-latest.db", "geonames/aa/AA.zip", "geonames/bb/BB.zip",
-                 "openaddresses/aa/countrywide.geojson", "osm/region-one.osm.pbf", "polylines/polylines.0sv.gz"):
+                 "openaddresses/aa/countrywide.geojson", "osm/region-one.osm.pbf", "polylines/polylines.0sv"):
         assert part in layout, part
     assert "postalcode-bb" not in layout
     assert env.es_calls[:4] == ["refresh", "count", "refresh", "count"]  # always refreshed before counting
