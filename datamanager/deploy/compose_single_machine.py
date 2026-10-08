@@ -13,7 +13,7 @@ import os
 import shutil
 import tarfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from datamanager.deploy.base import (ACTIVATORS, ActivationContext, Activator, DeployDriver, PackageView, PartView,
@@ -223,9 +223,9 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     # ---- plan ---------------------------------------------------------------------------------------------------
 
-    def plan_class(self, package: PackageView, class_: str) -> dict:
+    def plan_class(self, package: PackageView, class_: str, drop_previous: bool = False) -> dict:
         if class_ == "tiles":
-            return self._tiles().plan_class(package)
+            return self._tiles().plan_class(package, drop_previous)
         parts = package.of_class(class_)
         root = self.root(class_)
         problems, skip = [], None
@@ -243,6 +243,10 @@ class ComposeSingleMachineDriver(DeployDriver):
         need_root = 0 if present else sum(p.size for p in todo if target_of(class_, p).kind != "snapshot")
         need_snap = 0 if present else sum(p.size for p in todo if target_of(class_, p).kind == "snapshot")
         free_root = shutil.disk_usage(_existing_parent(root)).free
+        previous = self._pointer(root, "previous")
+        drops = previous if drop_previous and previous and previous != package.tag and not skip else None
+        if drops and (root / "releases" / drops).is_dir():
+            free_root += _dir_size(root / "releases" / drops)  # freed before the copy starts
         if need_root * FREE_SPACE_FACTOR > free_root and not skip:
             problems.append(f"not enough free space on {root}: need {need_root * FREE_SPACE_FACTOR / 1e9:.1f} GB, "
                             f"free {free_root / 1e9:.1f} GB")
@@ -254,7 +258,7 @@ class ComposeSingleMachineDriver(DeployDriver):
                                 f"free {free_snap / 1e9:.1f} GB")
         return {"class": class_, "tag": package.tag, "parts": len(parts), "bytes": sum(p.size for p in parts),
                 "bytes_to_copy": need_root + need_snap, "present": present, "current": current,
-                "previous": self._pointer(root, "previous"), "skip": skip, "problems": problems}
+                "previous": previous, "drops_previous": drops, "skip": skip, "problems": problems}
 
     # ---- transfer -----------------------------------------------------------------------------------------------
 
@@ -433,11 +437,28 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     # ---- the whole class ------------------------------------------------------------------------------------------
 
+    def drop_previous_release(self, class_: str, keep_tag: str | None = None, step: StepCb | None = None) -> str | None:
+        """Remove the previous release now (indices, unpacked snapshots, files, the `previous` link). Returns its tag."""
+        root = self.root(class_)
+        previous = self._pointer(root, "previous")
+        if not previous or previous == keep_tag:
+            return None
+        if step:
+            step(f"Remove previous release {previous}")
+        ctx = self._context(class_, previous)
+        ctx = replace(ctx, kept=tuple(t for t in ctx.kept if t != previous))  # an index only previous used may go
+        self._activator(class_)[0].release_removed(ctx)
+        self._switch(root, "previous", None)
+        shutil.rmtree(root / "releases" / previous, ignore_errors=True)
+        if class_ == "pelias":
+            shutil.rmtree(self._es_snapshots() / previous, ignore_errors=True)
+        return previous
+
     def deploy_class(self, package: PackageView, class_: str, progress: ProgressCb | None = None,
-                     step: StepCb | None = None) -> dict:
+                     step: StepCb | None = None, drop_previous: bool = False) -> dict:
         if class_ == "tiles":
-            return self._tiles().deploy_class(package, progress, step)
-        plan = self.plan_class(package, class_)
+            return self._tiles().deploy_class(package, progress, step, drop_previous)
+        plan = self.plan_class(package, class_, drop_previous)
         if plan["problems"]:
             raise DeployError(f"{class_}: " + "; ".join(plan["problems"]), problems=plan["problems"])
         if plan["skip"]:  # nothing to copy, but the services around the class still get their chance to start
@@ -446,6 +467,7 @@ class ComposeSingleMachineDriver(DeployDriver):
         root, tag = self.root(class_), package.tag
         final, partial = root / "releases" / tag, root / "releases" / f"{tag}.partial"
         root.mkdir(parents=True, exist_ok=True)
+        dropped = self.drop_previous_release(class_, tag, step) if drop_previous else None
         if not final.is_dir():
             self._transfer(package, class_, partial, progress, step)
             self._verify(package, class_, partial, progress, step)
@@ -483,7 +505,7 @@ class ComposeSingleMachineDriver(DeployDriver):
         except Exception as exc:  # the deploy itself succeeded
             removed, warnings = [], warnings + [f"cleanup of old releases failed: {exc}"]
         return {"class": class_, "status": "ok", "current": tag, "previous": old_current, "removed": removed,
-                "warnings": warnings}
+                "dropped_previous": dropped, "warnings": warnings}
 
     def rollback_class(self, class_: str, step: StepCb | None = None) -> dict:
         if class_ == "tiles":
@@ -504,6 +526,10 @@ class ComposeSingleMachineDriver(DeployDriver):
             raise DeployError(f"{class_}: rollback to {previous} failed ({exc}); {current} is current again") from exc
         removed = self.prune_class(class_)  # the release that was rolled back is gone from the target
         return {"class": class_, "status": "rolled_back", "current": previous, "rolled_back": current, "removed": removed}
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and not f.is_symlink())
 
 
 def _existing_parent(path: Path) -> Path:

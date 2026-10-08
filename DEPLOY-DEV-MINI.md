@@ -63,3 +63,6 @@ What each check showed, the run numbers, and anything that surprised you. Update
 - Package contents and generated parts (tiles `manifest.json`, geodata `manifest.yml`, Placeholder store, snapshot restore names): built.
 - Deploy driver `compose-single-machine` (copy, verify, relative `current`/`previous`, only those two kept, rollback), activators for valhalla/geodata/pelias, object-store transport for tiles with `tilesservice-env` activation, orchestrator, `deploy` stage, CLI and the Deploy page: built.
 - Still open for other repos: tilesservice reloading on `current.json` (then the `tilesservice-env` activator is unnecessary) and serving styles, glyphs and sprites from the release.
+
+## Disk space on later deploys
+A deploy removes the old `previous` only after the new release is healthy, so for a while the target holds three releases. If the SSD cannot take that, add `--drop-previous` (or tick *Remove the previous release first* on the Deploy page): the previous release of each class is removed before the copy, at the price of having no rollback target until the deploy is healthy. `flask deploy-plan --drop-previous` shows what it would remove.

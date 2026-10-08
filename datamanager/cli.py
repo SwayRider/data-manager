@@ -172,20 +172,22 @@ def register_cli(app: Flask) -> None:
     @click.option("--config", "config_key", required=True, help="Deploy configuration key, e.g. dev-mini.")
     @click.option("--tag", default=None, help="Package tag or unique label (default: the newest verified package).")
     @click.option("--classes", default="", help="Comma separated subset (default: all configured).")
-    def deploy_plan_command(config_key, tag, classes):
+    @click.option("--drop-previous", is_flag=True, help="Plan as if the previous release were removed first.")
+    def deploy_plan_command(config_key, tag, classes, drop_previous):
         """Show what a deploy would do; changes nothing."""
         from datamanager.deploy import orchestrator
         from datamanager.errors import DeployError
 
         try:
-            the_plan = orchestrator.plan(SessionLocal(), config_key, tag, [c for c in classes.split(",") if c])
+            the_plan = orchestrator.plan(SessionLocal(), config_key, tag, [c for c in classes.split(",") if c], drop_previous=drop_previous)
         except DeployError as exc:
             raise _deploy_error(exc)
         click.echo(f"Deploy {the_plan['package']} to {the_plan['config']}")
         for entry in the_plan["classes"]:
             what = f"skip ({entry['skip']})" if entry["skip"] else f"{entry['bytes_to_copy'] / 1e9:8.1f} GB to copy"
             click.echo(f"  {entry['class']:9} {entry['parts']:4} part(s) {entry['bytes'] / 1e9:8.1f} GB  {what}  "
-                       f"current={entry['current']} previous={entry['previous']}")
+                       f"current={entry['current']} previous={entry['previous']}"
+                       + (f"  REMOVES previous {entry['drops_previous']} first" if entry.get("drops_previous") else ""))
         for line in the_plan["warnings"]:
             click.echo(f"  ~ {line}")
         for line in the_plan["problems"]:
@@ -197,8 +199,10 @@ def register_cli(app: Flask) -> None:
     @click.option("--config", "config_key", required=True)
     @click.option("--tag", default=None, help="Package tag or unique label (default: the newest verified package).")
     @click.option("--classes", default="", help="Comma separated subset (default: all configured).")
+    @click.option("--drop-previous", is_flag=True, help="Remove the previous release of each class BEFORE copying, to save space "
+                  "(no rollback target until this deploy is healthy).")
     @click.option("--inline", is_flag=True, help="Run in this process instead of the worker (no Redis needed).")
-    def deploy_command(config_key, tag, classes, inline):
+    def deploy_command(config_key, tag, classes, drop_previous, inline):
         """Deploy a package to an environment, class by class (geodata, valhalla, pelias, tiles)."""
         from datamanager.deploy import orchestrator
         from datamanager.errors import DeployError
@@ -207,13 +211,14 @@ def register_cli(app: Flask) -> None:
         session = SessionLocal()
         wanted = [c for c in classes.split(",") if c]
         try:
-            the_plan = orchestrator.plan(session, config_key, tag, wanted)
+            the_plan = orchestrator.plan(session, config_key, tag, wanted, drop_previous=drop_previous)
             if the_plan["problems"]:
                 raise DeployError("; ".join(the_plan["problems"]))
             package = orchestrator.resolve_package(session, tag)
         except DeployError as exc:
             raise _deploy_error(exc)
-        params = {"deploy_config": config_key, "tag": package.tag, "classes": wanted, "triggered_by": "cli"}
+        params = {"deploy_config": config_key, "tag": package.tag, "classes": wanted, "triggered_by": "cli",
+                  "drop_previous": drop_previous}
         run = runs.create_run(session, "deploy", package.config_profile_id, params=params, triggered_by="cli")
         _start_deploy_run(session, run, inline)
 

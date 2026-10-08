@@ -139,7 +139,7 @@ def plan(key: str):
     row = _config_or_404(key)
     try:
         the_plan = orchestrator.plan(SessionLocal(), key, request.form.get("package") or None, _wanted_classes(row),
-                                     allow_unverified=False)
+                                     allow_unverified=False, drop_previous=bool(request.form.get("drop_previous")))
         error = None
     except DataManagerError as exc:
         the_plan, error = None, exc.message
@@ -166,13 +166,15 @@ def start(key: str):
     try:
         if orchestrator.active_deployment(session, row) is not None:
             raise DeployError("A deploy to this configuration is still running.")
-        the_plan = orchestrator.plan(session, key, request.form.get("package") or None, wanted)  # never trust the form: plan again
+        drop = bool(request.form.get("drop_previous"))
+        the_plan = orchestrator.plan(session, key, request.form.get("package") or None, wanted, drop_previous=drop)  # never trust the form: plan again
         if the_plan["problems"]:
             raise DeployError("; ".join(the_plan["problems"]))
         package = orchestrator.resolve_package(session, request.form.get("package") or None)
     except DataManagerError as exc:
         return redirect(url_for("deploy.workspace", key=key, error=exc.message), code=303)
-    return _start(row, {"deploy_config": key, "tag": package.tag, "classes": wanted, "triggered_by": "ui"}, package.config_profile_id)
+    return _start(row, {"deploy_config": key, "tag": package.tag, "classes": wanted, "triggered_by": "ui",
+                         "drop_previous": drop}, package.config_profile_id)
 
 
 @bp.post("/<key>/rollback")

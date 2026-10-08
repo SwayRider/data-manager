@@ -222,3 +222,18 @@ def test_plan_reports_missing_package_files_and_bytes_to_copy(tmp_path, driver):
     assert plan["bytes_to_copy"] == plan["bytes"] and not plan["problems"]
     (package.path / "tiles/manifest.json").unlink()
     assert any("manifest.json: missing" in p for p in driver.plan_class(package, "tiles")["problems"])
+
+
+def test_the_previous_tiles_release_can_be_removed_before_the_upload(tmp_path, driver, s3):
+    for n in (1, 2):
+        driver.deploy_class(make_package(tmp_path, f"r-{n}", str(n)), "tiles")
+    seen = {}
+
+    def step(label):
+        if label.startswith("Upload ") and "first" not in seen:
+            seen["first"] = sorted({k.split("/")[1] for k in s3.objects if k.startswith("releases/")}), "previous.json" in s3.objects
+    result = driver.deploy_class(make_package(tmp_path, "r-3", "3"), "tiles", step=step, drop_previous=True)
+    assert seen["first"] == (["r-2"], False)  # r-1 and its pointer were gone before the first object of r-3 went up
+    assert result["dropped_previous"] == "r-1" and result["previous"] == "r-2"
+    state = driver.describe_state(["tiles"])["tiles"]
+    assert (state["current"], state["previous"], state["releases"]) == ("r-3", "r-2", ["r-2", "r-3"])

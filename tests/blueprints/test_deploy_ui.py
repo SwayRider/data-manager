@@ -86,7 +86,7 @@ def test_start_creates_a_deploy_run_and_enqueues_it(ui):
     assert response.status_code == 303 and "/build/runs/" in response.headers["Location"]
     run = SessionLocal().query(BuildRun).one()
     assert run.stage_key == "deploy" and ui.queued == [run.id]
-    assert run.params_json == {"deploy_config": "dev-mini", "tag": "r-1", "classes": ["geodata", "valhalla"], "triggered_by": "ui"}
+    assert run.params_json == {"deploy_config": "dev-mini", "tag": "r-1", "classes": ["geodata", "valhalla"], "triggered_by": "ui", "drop_previous": False}
     # the run page renders (queued) for a deploy run
     assert ui.client.get(response.headers["Location"]).status_code == 200
 
@@ -133,3 +133,17 @@ def test_rollback_needs_a_previous_release(ui):
     assert done.status_code == 303 and "/build/runs/" in done.headers["Location"]
     run = SessionLocal().query(BuildRun).one()
     assert run.params_json["rollback"] is True and run.params_json["classes"] == ["geodata"]
+
+
+def test_the_deploy_form_can_ask_to_drop_the_previous_release(ui):
+    add_package(ui, "r-1", "1")
+    add_package(ui, "r-2", "2")
+    add_package(ui, "r-3", "3")
+    from datamanager.deploy import orchestrator as orch
+    orch.run(SessionLocal(), "dev-mini", "r-1", ["geodata"])
+    orch.run(SessionLocal(), "dev-mini", "r-2", ["geodata"])
+    html = ui.client.post("/deploy/dev-mini/plan", data={"package": "r-3", "classes": ["geodata"], "drop_previous": "1"}).get_data(as_text=True)
+    assert "previous release r-1 is removed before the copy starts" in html
+    assert "removed before" not in ui.client.post("/deploy/dev-mini/plan", data={"package": "r-3", "classes": ["geodata"]}).get_data(as_text=True)
+    ui.client.post("/deploy/dev-mini/start", data={"package": "r-3", "classes": ["geodata"], "drop_previous": "1"})
+    assert SessionLocal().query(BuildRun).one().params_json["drop_previous"] is True

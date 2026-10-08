@@ -22,7 +22,8 @@ class DeployStage(StageRunner):
                 deployment = orchestrator.run(
                     session, params["deploy_config"], params.get("tag"), params.get("classes") or None,
                     triggered_by=params.get("triggered_by", "operator"), build_run_id=int(context.run_id),
-                    allow_unverified=bool(params.get("allow_unverified")), progress=context.progress_cb, step=context.step_cb)
+                    allow_unverified=bool(params.get("allow_unverified")), progress=context.progress_cb, step=context.step_cb,
+                    drop_previous=bool(params.get("drop_previous")))
         except DeployError as exc:
             return StageResult("failed", report={"error": exc.message, "summary": {"config": params.get("deploy_config")}})
         detail = deployment.detail_json or {}

@@ -240,3 +240,19 @@ def test_cli_config_save_from_the_example_file(env, app, tmp_path):
     result = runner.invoke(app.cli, ["deploy-config-save", "example", "--file", "deploy-configs/dev-mini.example.json"])
     assert result.exit_code == 0, result.output
     assert "example" in runner.invoke(app.cli, ["deploy-config-list"]).output
+
+
+def test_drop_previous_through_the_orchestrator_and_the_cli(env, app):
+    add_package(env, "r-1", "1")
+    add_package(env, "r-2", "2")
+    add_package(env, "r-3", "3")
+    orchestrator.run(env.session, "dev-mini", "r-1", ["geodata"])
+    orchestrator.run(env.session, "dev-mini", "r-2", ["geodata"])
+    the_plan = orchestrator.plan(env.session, "dev-mini", "r-3", ["geodata"], drop_previous=True)
+    assert the_plan["classes"][0]["drops_previous"] == "r-1"
+    out = CliRunner().invoke(app.cli, ["deploy-plan", "--config", "dev-mini", "--tag", "r-3", "--classes", "geodata", "--drop-previous"])
+    assert "REMOVES previous r-1 first" in out.output
+    deployment = orchestrator.run(env.session, "dev-mini", "r-3", ["geodata"], drop_previous=True)
+    assert deployment.status == "succeeded" and deployment.detail_json["classes"]["geodata"]["dropped_previous"] == "r-1"
+    state = orchestrator.state(env.session, "dev-mini")["geodata"]
+    assert (state["current"], state["previous"], state["releases"]) == ("r-3", "r-2", ["r-2", "r-3"])

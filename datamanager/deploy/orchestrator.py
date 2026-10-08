@@ -92,7 +92,7 @@ def _check_package(package: Package, allow_unverified: bool) -> None:
 # ---- plan ---------------------------------------------------------------------------------------------------------
 
 def plan(session: Session, config_key: str, package_ref: str | None, classes: list[str] | None = None,
-         allow_unverified: bool = False) -> dict:
+         allow_unverified: bool = False, drop_previous: bool = False) -> dict:
     config = get_config(session, config_key)
     package = resolve_package(session, package_ref)
     view = PackageView.from_package(package)
@@ -104,7 +104,7 @@ def plan(session: Session, config_key: str, package_ref: str | None, classes: li
         problems.append(exc.message)
     order = class_order(config, classes)
     for name in order:
-        entry = driver.plan_class(view, name)
+        entry = driver.plan_class(view, name, drop_previous)
         problems += [f"{name}: {p}" for p in entry["problems"]]
         entries.append(entry)
     state = driver.describe_state(order)
@@ -159,9 +159,10 @@ def _package_by_tag(session: Session, tag: str | None) -> Package | None:
 
 def run(session: Session, config_key: str, package_ref: str | None, classes: list[str] | None = None,
         triggered_by: str = "operator", build_run_id: int | None = None, allow_unverified: bool = False,
-        progress: ProgressCb | None = None, step: StepCb | None = None) -> Deployment:
+        progress: ProgressCb | None = None, step: StepCb | None = None, drop_previous: bool = False) -> Deployment:
     """Deploy the classes in order. A failed class stops the sequence (the ones before it stay live); the returned
-    deployment says which. Running it again resumes: classes that are current are skipped."""
+    deployment says which. Running it again resumes: classes that are current are skipped. `drop_previous` removes the
+    previous release of each class before its copy starts (saves space; no rollback target until the deploy is healthy)."""
     config = get_config(session, config_key)
     package = resolve_package(session, package_ref)
     _check_package(package, allow_unverified)
@@ -188,7 +189,7 @@ def run(session: Session, config_key: str, package_ref: str | None, classes: lis
         for name in order:
             if step:
                 step(f"Deploy {name}")
-            result = driver.deploy_class(view, name, progress, step)
+            result = driver.deploy_class(view, name, progress, step, drop_previous)
             detail["classes"][name] = result
             deployment.detail_json = dict(detail)
             session.commit()

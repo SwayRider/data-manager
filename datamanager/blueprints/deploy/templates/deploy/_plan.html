@@ -7,6 +7,7 @@
       <td>{{ e.current or '-' }}</td><td>{% if e.skip %}skipped: {{ e.skip }}{% else %}becomes {{ plan.package }}, {{ e.current or 'nothing' }} turns into previous{% endif %}</td></tr>
   {% endfor %}
 </table>
+{% for e in plan.classes if e.drops_previous %}<p class="warn-line">{{ e.class }}: the previous release {{ e.drops_previous }} is removed before the copy starts; if the deploy fails there is nothing to roll back to.</p>{% endfor %}
 <p class="muted">After the deploy the target holds only {{ plan.package }} and the release that is current now; anything older is removed from the target.</p>
 {% for w in plan.warnings %}<p class="warn-line">{{ w }}</p>{% endfor %}
 {% for p in plan.problems %}<p class="error">{{ p }}</p>{% endfor %}

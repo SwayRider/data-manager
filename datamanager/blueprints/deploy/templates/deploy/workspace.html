@@ -21,6 +21,8 @@
   <fieldset><legend>Classes <span class="hint">deployed in this order</span></legend>
     <div class="check-list">{% for c in classes %}<label><input type="checkbox" name="classes" value="{{ c }}" checked><span><strong>{{ c }}</strong></span></label>{% endfor %}</div>
   </fieldset>
+  <div class="check-list"><label><input type="checkbox" name="drop_previous" value="1">
+    <span>Remove the previous release first <span class="hint">saves disk space during the deploy; until this deploy is healthy there is no release to roll back to</span></span></label></div>
   <div id="deploy-plan" class="plan-panel"><p class="muted">Checking what would happen…</p></div>
 </form>
 

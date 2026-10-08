@@ -134,7 +134,7 @@ class TilesTransport:
         head = self._head(_key(tag, part.path))
         return bool(head and head["ContentLength"] == part.size and (head.get("Metadata") or {}).get("sha256") == part.sha256)
 
-    def plan_class(self, package: PackageView) -> dict:
+    def plan_class(self, package: PackageView, drop_previous: bool = False) -> dict:
         parts = package.of_class("tiles")
         problems, skip = [], None
         if not parts:
@@ -142,10 +142,11 @@ class TilesTransport:
         for part in parts:
             if not (package.path / part.path).is_file():
                 problems.append(f"{part.path}: missing in the package")
-        current = None
+        current = previous = None
         todo = parts
         try:
             current = self._read_pointer(CURRENT)
+            previous = self._read_pointer(PREVIOUS)
             if current == package.tag:
                 skip = "already current"
             todo = [p for p in parts if not self._stored(package.tag, p)]
@@ -153,7 +154,8 @@ class TilesTransport:
             problems.append(str(exc))
         return {"class": "tiles", "tag": package.tag, "parts": len(parts), "bytes": sum(p.size for p in parts),
                 "bytes_to_copy": sum(p.size for p in todo), "present": bool(parts) and not todo, "current": current,
-                "previous": None, "skip": skip, "problems": problems}
+                "previous": previous, "drops_previous": previous if drop_previous and previous and previous != package.tag and not skip else None,
+                "skip": skip, "problems": problems}
 
     # ---- upload -------------------------------------------------------------------------------------------------
 
@@ -250,6 +252,30 @@ class TilesTransport:
 
     # ---- the whole class ----------------------------------------------------------------------------------------
 
+    def _delete_release(self, tag: str) -> None:
+        token = None
+        while True:
+            args = {"Bucket": self.bucket, "Prefix": f"releases/{tag}/"}
+            if token:
+                args["ContinuationToken"] = token
+            page = self.client.list_objects_v2(**args)
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if keys:
+                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True})
+            token = page.get("NextContinuationToken")
+            if not token:
+                break
+
+    def drop_previous_release(self, keep_tag: str | None = None, step: StepCb | None = None) -> str | None:
+        previous = self._read_pointer(PREVIOUS)
+        if not previous or previous == keep_tag:
+            return None
+        if step:
+            step(f"Remove previous release {previous}")
+        self._write_pointer(PREVIOUS, None)  # first the pointer, then the objects
+        self._delete_release(previous)
+        return previous
+
     def prune_class(self, dry_run: bool = False) -> list[str]:
         keep = {self._read_pointer(CURRENT), self._read_pointer(PREVIOUS)} - {None}
         doomed = [t for t in self._release_prefixes() if t not in keep]
@@ -257,26 +283,16 @@ class TilesTransport:
             return doomed
         for tag in doomed:
             self._activator().release_removed(self._context(tag))
-            token = None
-            while True:
-                args = {"Bucket": self.bucket, "Prefix": f"releases/{tag}/"}
-                if token:
-                    args["ContinuationToken"] = token
-                page = self.client.list_objects_v2(**args)
-                keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
-                if keys:
-                    self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": keys, "Quiet": True})
-                token = page.get("NextContinuationToken")
-                if not token:
-                    break
+            self._delete_release(tag)
         return doomed
 
     def _switch_back(self, before: dict) -> None:
         self._write_pointer(CURRENT, before["current"])
         self._write_pointer(PREVIOUS, before["previous"])
 
-    def deploy_class(self, package: PackageView, progress: ProgressCb | None = None, step: StepCb | None = None) -> dict:
-        plan = self.plan_class(package)
+    def deploy_class(self, package: PackageView, progress: ProgressCb | None = None, step: StepCb | None = None,
+                     drop_previous: bool = False) -> dict:
+        plan = self.plan_class(package, drop_previous)
         if plan["problems"]:
             raise DeployError("tiles: " + "; ".join(plan["problems"]), problems=plan["problems"])
         if plan["skip"]:
@@ -285,6 +301,7 @@ class TilesTransport:
             return {"class": "tiles", "status": "skipped", "reason": plan["skip"], "current": package.tag,
                     "warnings": activators.ensure_after(self.block.get("activate") or {})}
         tag = package.tag
+        dropped = self.drop_previous_release(tag, step) if drop_previous else None
         self._transfer(package, progress, step)
         if step:
             step("Verify tiles")
@@ -317,7 +334,7 @@ class TilesTransport:
         except Exception as exc:
             removed, warnings = [], warnings + [f"cleanup of old releases failed: {exc}"]
         return {"class": "tiles", "status": "ok", "current": tag, "previous": before["current"], "removed": removed,
-                "warnings": warnings}
+                "dropped_previous": dropped, "warnings": warnings}
 
     def rollback_class(self, step: StepCb | None = None) -> dict:
         current, previous = self._read_pointer(CURRENT), self._read_pointer(PREVIOUS)
