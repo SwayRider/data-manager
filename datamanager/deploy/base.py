@@ -62,6 +62,9 @@ class Activator(ABC):
     def check_health(self, ctx: ActivationContext) -> None:
         """Raises DeployError when the services are not healthy within the timeout."""
 
+    def abandon(self, ctx: ActivationContext) -> None:
+        """A first activation failed and nothing was live before: undo what points the services at `ctx.tag`."""
+
     def release_removed(self, ctx: ActivationContext) -> None:
         """Called before the files of an old release are removed (e.g. drop its Elasticsearch indices)."""
 

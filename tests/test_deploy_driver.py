@@ -1,6 +1,7 @@
 import gzip
 import hashlib
 import io
+import json
 import os
 import tarfile
 from pathlib import Path
@@ -49,6 +50,9 @@ def make_package(tmp_path: Path, tag: str, version: str = "1") -> PackageView:
     add("pelias", "benelux", "pelias/benelux/wof.tar.gz", _tar({"whosonfirst-data-admin-be.db": b"wof"}))
     add("pelias", "benelux", "pelias/benelux/benelux.es-snapshot.tar", _tar({"index-0": b"snap" + version.encode()}))
     add("pelias", None, "pelias/placeholder/store.sqlite3.gz", gzip.compress(b"placeholder-store"))
+    add("tiles", None, "tiles/tiles.pmtiles", (f"pmtiles{version}-" * 40).encode())
+    add("tiles", None, "tiles/styles/swayrider/1/light.json", b'{"version": 8}')
+    add("tiles", None, "tiles/manifest.json", json.dumps({"release": tag}).encode(), kind="manifest")
     return PackageView(tag, folder, tuple(parts))
 
 

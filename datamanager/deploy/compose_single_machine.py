@@ -104,6 +104,7 @@ class ComposeSingleMachineDriver(DeployDriver):
             raise DeployError("Invalid deploy configuration: " + "; ".join(problems), problems=problems)
         self.config = config
         self.options = {"verify": "full", "health_timeout": 300, **(options or {})}
+        self._tiles_transport = None
 
     # ---- configuration ------------------------------------------------------------------------------------------
 
@@ -117,7 +118,10 @@ class ComposeSingleMachineDriver(DeployDriver):
             return problems + ["classes: at least one class is required"]
         for name, block in classes.items():
             if name == "tiles":
-                continue  # object-store transport, validated where it is added
+                from datamanager.deploy.s3_tiles import validate_tiles_block
+
+                problems += validate_tiles_block(block or {})
+                continue
             if name not in FILE_CLASSES:
                 problems.append(f"classes.{name}: unknown class")
                 continue
@@ -133,6 +137,15 @@ class ComposeSingleMachineDriver(DeployDriver):
         if order is not None and (not isinstance(order, list) or not set(order) <= set(classes)):
             problems.append("activation_order: must list configured classes only")
         return problems
+
+    def _tiles(self):
+        from datamanager.deploy.s3_tiles import TilesTransport
+
+        if "tiles" not in self.config["classes"]:
+            raise DeployError("Class tiles is not configured")
+        if self._tiles_transport is None:
+            self._tiles_transport = TilesTransport(self.config["classes"]["tiles"], self.options)
+        return self._tiles_transport
 
     def class_names(self) -> list[str]:
         order = self.config.get("activation_order") or list(self.config["classes"])
@@ -179,7 +192,10 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     def describe_state(self, classes: list[str] | None = None) -> dict[str, dict]:
         state = {}
-        for name in classes or [c for c in self.class_names() if c in FILE_CLASSES]:
+        for name in classes or self.class_names():
+            if name == "tiles":
+                state[name] = self._tiles().describe_state()
+                continue
             root = self.root(name)
             state[name] = {"root": str(root), "current": self._pointer(root, "current"),
                            "previous": self._pointer(root, "previous"), "releases": self._releases(root),
@@ -192,6 +208,8 @@ class ComposeSingleMachineDriver(DeployDriver):
     # ---- plan ---------------------------------------------------------------------------------------------------
 
     def plan_class(self, package: PackageView, class_: str) -> dict:
+        if class_ == "tiles":
+            return self._tiles().plan_class(package)
         parts = package.of_class(class_)
         root = self.root(class_)
         problems, skip = [], None
@@ -375,6 +393,8 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     def prune_class(self, class_: str, dry_run: bool = False) -> list[str]:
         """Remove every release except `current` and `previous`, and leftover .partial folders."""
+        if class_ == "tiles":
+            return self._tiles().prune_class(dry_run)
         root = self.root(class_)
         keep = {self._pointer(root, "current"), self._pointer(root, "previous")} - {None}
         doomed = [t for t in self._releases(root) if t not in keep]
@@ -397,6 +417,8 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     def deploy_class(self, package: PackageView, class_: str, progress: ProgressCb | None = None,
                      step: StepCb | None = None) -> dict:
+        if class_ == "tiles":
+            return self._tiles().deploy_class(package, progress, step)
         plan = self.plan_class(package, class_)
         if plan["problems"]:
             raise DeployError(f"{class_}: " + "; ".join(plan["problems"]), problems=plan["problems"])
@@ -425,6 +447,11 @@ class ComposeSingleMachineDriver(DeployDriver):
                 except Exception as again:  # report both; the symlink is already back
                     raise DeployError(f"{class_}: activation of {tag} failed ({exc}); switched back to "
                                       f"{before['current']}, which did not come up either ({again})") from exc
+            if not before["current"]:
+                try:
+                    self._activator(class_)[0].abandon(self._context(class_, tag))
+                except Exception:
+                    pass
             raise DeployError(f"{class_}: activation of {tag} failed ({exc}); "
                               + (f"switched back to {before['current']}" if before["current"] else "nothing was live before")) from exc
         warnings = []
@@ -436,6 +463,8 @@ class ComposeSingleMachineDriver(DeployDriver):
                 "warnings": warnings}
 
     def rollback_class(self, class_: str, step: StepCb | None = None) -> dict:
+        if class_ == "tiles":
+            return self._tiles().rollback_class(step)
         root = self.root(class_)
         current, previous = self._pointer(root, "current"), self._pointer(root, "previous")
         if not previous or not (root / "releases" / previous).is_dir():

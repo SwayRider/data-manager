@@ -110,5 +110,33 @@ class PeliasRestore(Activator):
             self._es(ctx, "DELETE", f"/_snapshot/dm_{ctx.tag}_{region}", missing_ok=True)
 
 
+class TilesserviceEnv(Activator):
+    """tilesservice reads one `PMTILES_URL` at startup (no reload on `current.json` yet): write it into the env file that
+    the compose file includes, then recreate the container (a restart does not re-read an env file).
+      {"type": "tilesservice-env", "env_file": ".../layer-20/tiles-release.env", "compose_file": ".../layer-20/compose.yml",
+       "service": "tilesservice", "container": "sw-dev-tilesservice", "ready_urls": {"tiles": "http://localhost:34005/..."}}"""
+
+    @staticmethod
+    def _write_env(ctx: ActivationContext) -> None:
+        env_file = Path(ctx.settings["env_file"])
+        url = f"s3://{ctx.options['bucket']}/releases/{ctx.tag}/tiles.pmtiles"
+        tmp = env_file.with_name(env_file.name + ".tmp")
+        tmp.write_text(f"PMTILES_URL={url}\n")
+        tmp.replace(env_file)
+
+    def activate(self, ctx: ActivationContext) -> None:
+        self._write_env(ctx)
+        docker.run(["compose", "-f", ctx.settings["compose_file"], "up", "-d", "--no-deps", "--force-recreate",
+                    ctx.settings.get("service", "tilesservice")], timeout=600)
+
+    def check_health(self, ctx: ActivationContext) -> None:
+        docker.wait_ready([ctx.settings.get("container", "sw-dev-tilesservice")], float(ctx.options["health_timeout"]),
+                          ctx.settings.get("ready_urls"))
+
+    def abandon(self, ctx: ActivationContext) -> None:
+        Path(ctx.settings["env_file"]).unlink(missing_ok=True)
+
+
+ACTIVATORS["tilesservice-env"] = TilesserviceEnv
 ACTIVATORS["compose-restart"] = ComposeRestart
 ACTIVATORS["pelias-restore"] = PeliasRestore
