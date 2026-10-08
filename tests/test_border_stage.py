@@ -160,6 +160,8 @@ def test_builds_outlines_and_crossings(inputs):
     assert rows[0] == borders.CSV_HEADER
     assert len(rows) == 4  # header + 3
     assert {r[1] for r in rows[1:]} == {"primary", "motorway"}
+    # regionservice looks crossings up by the region keys of manifest.yml, which are the lowercase slugs
+    assert {(r[2], r[3]) for r in rows[1:]} <= {("r2", "region-one"), ("region-one", "r2")}
     outline = assets.current(SessionLocal(), inputs, "region-outline", "r2-core")
     parts = borders.load_outline(assets.abs_path(outline))
     assert len(parts) == 1 and parts[0].bounds == pytest.approx((1.15, 50, 2.15, 51))

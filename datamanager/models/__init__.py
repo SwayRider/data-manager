@@ -5,6 +5,7 @@ from datamanager.models.config_profile import ConfigProfile
 from datamanager.models.country import Country
 from datamanager.models.country_address_source import CountryAddressSource
 from datamanager.models.country_boundary_source import CountryBoundarySource
+from datamanager.models.deploy import DeployConfig, Deployment
 from datamanager.models.downloads import DownloadRecord
 from datamanager.models.package import Package, PackageItem, PackageLabel
 from datamanager.models.runs import BuildRun, BuildStep
@@ -28,6 +29,8 @@ __all__ = [
     "CountryAddressSource",
     "CountryBoundarySource",
     "CountryCarve",
+    "DeployConfig",
+    "Deployment",
     "DownloadRecord",
     "GlobalSetting",
     "Package",

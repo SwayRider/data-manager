@@ -93,6 +93,7 @@ def test_unchanged_build_is_not_downloaded_again(builds):
 
 
 def test_newer_build_replaces_the_old_one_after_approval(builds):
+    settings_service.save(SessionLocal(), {"download.tiles_keep": 1})
     first, _ = _run()
     runs.approve(SessionLocal(), runs.get_run(SessionLocal(), first))
     builds.set_build("20261001.pmtiles", make_pmtiles(padding=200), '"t2"')
@@ -100,7 +101,7 @@ def test_newer_build_replaces_the_old_one_after_approval(builds):
     assert _report(second)["summary"]["status"] == "downloaded"
     runs.approve(SessionLocal(), runs.get_run(SessionLocal(), second))
     found = downloads.versions(SessionLocal(), "tiles:planet")
-    assert len(found) == 1 and found[0].filename == "20261001.pmtiles"  # download.tiles_keep = 1
+    assert len(found) == 1 and found[0].filename == "20261001.pmtiles"  # download.tiles_keep = 1 (default is 2)
 
 
 def test_wrong_schema_and_zoom_give_warnings(builds):
@@ -131,3 +132,12 @@ def test_build_list_failure_falls_back_to_dated_probe(builds):
     builds.files["/" + today] = (make_pmtiles(), '"d"')
     run_id, result = _run()
     assert result["status"] == "awaiting_review" and _report(run_id)["file"]["filename"] == today
+
+
+def test_two_builds_are_kept_by_default(builds):
+    first, _ = _run()
+    runs.approve(SessionLocal(), runs.get_run(SessionLocal(), first))
+    builds.set_build("20261001.pmtiles", make_pmtiles(padding=200), '"t2"')
+    second, _ = _run()
+    runs.approve(SessionLocal(), runs.get_run(SessionLocal(), second))
+    assert len(downloads.versions(SessionLocal(), "tiles:planet")) == 2

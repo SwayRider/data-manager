@@ -32,6 +32,7 @@ def test_upgrade_creates_tables_and_round_trips(tmp_path):
         "country_boundary_source", "region", "region_country", "region_overlap",
         "region_openaddresses_exclusion", "country_carve", "style_settings", "global_setting", "region_gtfs_feed",
         "build_run", "build_step", "download_record", "asset", "package", "package_item", "package_label",
+        "deploy_config", "deployment",
     }
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     conn.close()

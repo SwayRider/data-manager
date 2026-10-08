@@ -41,6 +41,7 @@ GROUPS = {
     "tool": "Tool versions",
     "pelias": "Pelias",
     "package": "Package repository",
+    "deploy": "Deploy",
     "cleanup": "Cleanup after packaging (ticked by default = delete)",
 }
 
@@ -69,9 +70,13 @@ SETTINGS: tuple[SettingDef, ...] = (
                "Protomaps asks not to hotlink: the build is fetched once per release and kept.",
                "url", "https://build.protomaps.com/"),
     SettingDef("download.tiles_keep", "download", "Tile builds kept", "How many full Protomaps planet builds are kept on disk.",
-               "int", 1, min=1, max=3),
+               "int", 2, min=1, max=3),
     SettingDef("package.keep", "package", "Packages kept", "How many unprotected packages `packages-prune` keeps (newest first).",
                "int", 3, min=1, max=50),
+    SettingDef("deploy.verify", "deploy", "Verification after copying", "full = sha256 of every file on the target after copying "
+               "(slow, catches corrupt copies); size = file sizes only.", "str", "full", pattern=r"full|size"),
+    SettingDef("deploy.health_timeout", "deploy", "Health check timeout (s)", "How long a service gets to become healthy after "
+               "activation before the deploy switches back to the previous release.", "int", 300, min=10, max=3600),
     SettingDef("download.connections", "download", "Parallel connections", "Parallel Range segments used for large downloads.",
                "int", 4, min=1, max=8),
     SettingDef("download.country_polys", "download", "Country polygons", "Base URL of the per-country .poly files (a few kB each) used to cut countries from the planet.",

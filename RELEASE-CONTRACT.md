@@ -29,13 +29,13 @@ Classes are the unit a deploy config maps to a drive/target. Sources are existin
 |---|---|---|
 | `tiles` | `tiles.pmtiles`, `styles/…`, `glyphs/…`, `sprites/…`, tiles `manifest.json` (tilesservice contract in `SERVICES.md`) | download version `tiles:planet` (**a download record, not an asset** — see §7), `style` assets; glyphs/sprites: vendored in the app (`datamanager/blueprints/configure/static/map-assets`), `manifest.json`: generated at packaging |
 | `valhalla` | `valhalla_tiles.tar` (renamed from `tiles.tar`), `admin.sqlite`, `tz_world.sqlite` | `valhalla-tiles`, `valhalla-admin`, `valhalla-timezones` (`valhalla-polylines` is a pelias input; not shipped *(verify)*) |
-| `pelias` | ES snapshot, `pelias.json`, `wof/` (sqlite dir incl. patched DBs), `interpolation/{street.db,address.db}` | `pelias-index-snapshot`, `pelias-config`, `pelias-wof`, `pelias-interpolation-street-db`, `pelias-interpolation-address-db` |
-| `geodata` | `manifest.yml` (regionservice format, generated at packaging), contour GeoJSON, border-crossing CSVs | `region-outline`, `border-crossings` *(verify mapping of `region-outline` to the legacy contour files regionservice reads)* |
+| `pelias` | ES snapshot, `pelias.json`, `wof/` (sqlite dir incl. patched DBs), `interpolation/{street.db,address.db}`, the Placeholder store (once, not per region) | `pelias-index-snapshot` (part meta carries `index_name`, `snapshot_name`, `snapshot_repository`, `docs` for the restore), `pelias-config`, `pelias-wof`, `pelias-interpolation-street-db`, `pelias-interpolation-address-db`, download `placeholder:store` |
+| `geodata` | `manifest.yml` (regionservice format, generated at packaging: `regions.<r>.contour.{core,extended}` and `shared.border-crossings.<pair>`, each `{local-file, remote-file, hash-type: md5, hash}`, paths relative to the release), contour GeoJSON, border-crossing CSVs | `region-outline`, `border-crossings` *(checked against regionservice `internal/geodata` 2026-10-07: only `regions.<r>.contour.{core,extended}` and `shared.border-crossings.<pair>` with `remote-file` (relative to the geodata dir) are read; `path`, `tag`, the timestamps, `local-file` and the hashes are ignored, hashes are never verified. The region keys must equal the `from_region`/`to_region` values of the crossing CSVs, because regionservice looks crossings up by those names: both are the lowercase region slugs)* |
 
 A package may contain all classes or a subset (`package.json` lists them); a package of subset classes is valid, **but** packaging validates cross-class consistency when classes overlap: the same region set in `valhalla`, `pelias` and `geodata`, one configuration/resolved-hash, all source runs `approved` (only approved assets feed packages, as for stages).
 
 ### 2.2 Archive form
-- The package **owns its files**: parts are **copied** from `library/`/`downloads/` into the package repository (decision 2026-10-05, replaces "hard-linked or copied"). The repository is its own folder, `PACKAGE_ROOT` (env, default `DATA_ROOT/releases`; on this machine `/mnt/hdd-pool/swayrider/data-repo`, a ZFS dataset), on a different filesystem than `DATA_ROOT` (XFS on `/mnt/ssd2`), where hard links are impossible. Same filesystem: `os.link` is allowed as an optimisation (copy on `EXDEV`). Each file is copied and hashed in one pass (sha256, compared with the known `asset.content_hash`/download hash), so asset/download cleanup can never break a package and needs no "referenced by a package" protection. Every package costs its full size, hence the free-space pre-check (size x 1.05) and retention (§2.4). Recommended dataset properties: `compression=lz4` or `off` (parts are already compressed), `recordsize=1M`.
+- The package **owns its files**: parts are **copied** from `library/`/`downloads/` into the package repository (decision 2026-10-05, replaces "hard-linked or copied"). The repository is its own folder, `PACKAGE_ROOT` (env, default `DATA_ROOT/releases`; on this machine `/mnt/hdd-pool/swayrider/data-repo`, a ZFS dataset), on a different filesystem than `DATA_ROOT` (XFS on `/mnt/ssd2`), where hard links are impossible. Same filesystem: `os.link` is allowed as an optimisation (copy on `EXDEV`). Each file is copied and hashed in one pass (sha256, compared with the known `asset.content_hash`/download hash), so asset/download cleanup can never break a package and needs no "referenced by a package" protection. Every package costs its full size, hence the free-space pre-check (size x 1.05) and manual retention (§2.4). Recommended dataset properties: `compression=lz4` or `off` (parts are already compressed), `recordsize=1M`.
 - Recommended form: `releases/<tag>/package.json` + per class either a directory of files or one `<class>/<part>.tar` for many-small-file parts (wof sqlite dir, geodata, styles/glyphs). **Single huge already-compressed files (`tiles.pmtiles`, ES snapshot, `valhalla_tiles.tar`) are stored as-is, not re-tarred** (no gain; keeps rsync resume and range reads). Exact form: open decision §7.
 - Layout (`$PACKAGE_ROOT/<tag>/`; `<tag>.partial/` while building, swept on failure and at start, never counted as a package):
 ```
@@ -44,7 +44,8 @@ A package may contain all classes or a subset (`package.json` lists them); a pac
   tiles/        tiles.pmtiles, manifest.json (generated), styles/<id>/<version>/{light,dark}.json, glyphs/<fontstack>/<range>.pbf, sprites/<name>[@2x].{json,png}  (plain files: the S3 release needs single objects)
   valhalla/<region>/  valhalla_tiles.tar, admin.sqlite, tz_world.sqlite
   pelias/<region>/    <region>.es-snapshot.tar, pelias.json, wof.tar.gz, interpolation/{street.db,address.db}
-  geodata/      contours/<region>-{core,extended}.geojson, border-crossings/<a>-<b>.csv   (manifest.yml for regionservice: not generated yet)
+  pelias/placeholder/ store.sqlite3.gz  (the deploy unpacks it to placeholder/data/store.sqlite3)
+  geodata/      contours/<region>-{core,extended}.geojson, border-crossings/<a>-<b>.csv   manifest.yml (generated)
 ```
 
 ### 2.3 `package.json` (schema 1)
@@ -66,8 +67,9 @@ Rules: sha256 per file (a `tar` part hashes the tar); `source` ids give the trac
 
 Every package carries the fixed tags `date` (UTC, `YYYY-MM-DD`) and `config` (configuration name); the new-package form shows them up front. They and the other automatic keys are reserved: labels cannot set or overwrite `date`, `config`, `regions`, `classes`, `created_by`, `source_runs`, `tiles_build`, `tool.*`, `resolved_hash.*` (`packages.check_labels`). **Automatic tags** are frozen at packaging time, written into `package.json` (`tags` object) and mirrored in the table `package_label` (`origin = auto`) for filtering: `config` (name and id), `resolved_hash` per region, `regions`, `classes`, `created_at` (UTC), `created_by`, per class the data dates and tool versions (planet OSM date, Protomaps build date, Pelias run ids, valhalla tag, elasticsearch version, pelias ref, `PLAN_VERSION`) and the source run ids. **User labels** are mutable (`origin = user`): free `key=value` or bare labels (`candidate`, `live=dev-mini`), a `note` and `protected`. They live in the DB and are re-exported to `labels.json` next to `package.json` (outside the hashed content, so the package stays immutable). **The folder is self-describing**: `flask packages-reindex` rebuilds the `package`, `package_item` and `package_label` rows from `package.json` + `labels.json`, so the repository can move to another machine or survive a lost DB. Tables (migration 0019): `package(id, tag UNIQUE, config_profile_id, status building|complete|failed, size_bytes, path, note, protected, created_at, created_by, build_run_id, package_json_hash)`, `package_item` as in §6, `package_label(package_id, key, value, origin)`. Packaging is a `package` stage run (RQ, byte progress) **without a review gate** (a package is not input of another stage); the package itself is the artefact and `verify` is the check.
 
-- Tag `r-YYYYMMDD-N` (N = counter per day), unique, immutable; optional free-text note and `protected` flag (never auto-pruned). Delete only if no deployment references it as current or previous.
-- Retention: keep newest N unprotected packages (setting, default 3) + anything protected or live on a deploy config. Disk matters: each package with tiles is ~140 GB; two planet builds already in `downloads/` (`download.tiles_keep`) — set `tiles_keep = 2` while rollback of tiles is wanted, but packages hold their own hard links so the download prune is independent.
+- Tag `r-YYYYMMDD-N` (N = counter per day), unique, immutable; optional free-text note and `protected` flag (never auto-pruned). Delete only if no deployment references it as current or previous (label `live=<config>`).
+- **Extra tags (user labels)** are added, changed and removed one by one on `/repo/<tag>` (`packages.add_label|change_label|remove_label`). A bare label (`v1.0.1`, `test-20261007`) names one package: it is unique across the repository and never equals another package's tag, so `deploy --tag <label>` is unambiguous; `key=value` labels may repeat.
+- **Retention in the repository is manual** (decision 2026-10-08): nothing deletes packages by itself. `packages-prune` is an explicit CLI command (dry run unless `--apply`); a package that is live on a deploy config can never be deleted or pruned. Disk matters: each package with tiles is ~140 GB; two planet builds already in `downloads/` (`download.tiles_keep`) — set `tiles_keep = 2` while rollback of tiles is wanted, but packages hold their own hard links so the download prune is independent.
 - Create from the `/repo` page ("Package current approved build" for a configuration; list/inspect/verify/delete/protect). Creation is an RQ job (same `build_run`/`build_step` progress infrastructure, stage key `package`) since hashing 140 GB takes time.
 
 ## 3. Deploy configuration
@@ -90,21 +92,21 @@ Config sketch (per class its own root = its own drive; `host: null` = local):
 {"driver": "compose-single-machine",
  "host": {"ssh": "deploy@dev-mini", "port": 22, "key": "~/.ssh/dm_deploy"},
  "classes": {
-   "tiles":    {"root": "/mnt/ssd-a/swayrider/tiles",    "activate": {"type": "signal", "container": "sw-dev-tilesservice", "signal": "HUP"}},
+   "tiles":    {"transport": "s3", "…": "see §3.3", "activate": {"type": "tilesservice-env", "env_file": "…/layer-20/tiles-release.env", "compose": "…/layer-20/compose.yml", "service": "tilesservice"}},
    "valhalla": {"root": "/mnt/ssd-b/swayrider/valhalla",  "activate": {"type": "compose-restart", "file": "…/layer-10/docker-compose.yml", "services": {"benelux": "…", "france": "…", "germany": "…"}}},
    "pelias":   {"root": "/mnt/ssd-b/swayrider/pelias",    "es_snapshots": "/mnt/ssd-c/swayrider/es-snapshots",
-                "activate": {"type": "pelias-restore", "es_url": "http://…:9200", "alias_template": "pelias-{region}", "restart": {"…": "…"}}},
+                "activate": {"type": "pelias-restore", "es_url": "http://…:9200", "restart": {"…": "…"}}},
    "geodata":  {"root": "/mnt/ssd-b/swayrider/geodata",   "activate": {"type": "compose-restart", "file": "…/layer-20/docker-compose.yml", "services": {"all": "regionservice"}}}},
- "activation_order": ["geodata", "valhalla", "pelias", "tiles"],
- "keep_releases": 2}
+ "activation_order": ["geodata", "valhalla", "pelias", "tiles"]}
 ```
 Procedure per class (as migration doc §3, now driver code):
 1. `transfer`: `rsync -a --partial --inplace`-style resumable copy of `releases/<tag>/<class>/` to `<root>/releases/<tag>.partial/` (ssh, or local path); files already identical (size+hash) are skipped, so re-running a failed deploy resumes.
 2. `verify`: sha256 of every part on the target against `package.json` (`sha256sum` over ssh; for 140 GB this is a conscious cost — a `verify: size|full` setting, default `full`); mismatch = failed deploy, nothing switched.
 3. `finalize`: `mv <tag>.partial → <tag>`, then switch `<root>/current` with a **relative** symlink (`ln -sfn releases/<tag> current.new && mv -T current.new current`); remember the previous target.
 4. `activate`: class-specific action; **health check** (HTTP/`/ready`/ES query) with timeout; on failure automatic switch back of `current` + re-activate previous, deploy marked `failed` with reason.
-5. Prune releases beyond `keep_releases` (never the current or previous).
-Activation per class: tiles = SIGHUP/poll of the symlink (no restart; tilesservice reload contract); valhalla = per-region container restart; pelias = copy snapshot into `es_snapshots`, restore, alias switch, restart pip/api/interpolation; geodata = restart regionservice. Order and rationale in migration doc §3 (region names must agree across classes).
+5. Prune (decision 2026-10-08): a target holds **only `current` and `previous`**. After the new release is healthy, every other release directory (older releases, leftover `.partial` folders) is removed; the old `current` becomes `previous`, the old `previous` is dropped. Before the health check passes nothing is removed, so a failed deploy leaves the target as it was. No `keep_releases` setting. Pelias indices of removed releases are deleted from Elasticsearch with them.
+6. **Rollback** (`current` back to `previous`): flip the symlink, re-activate, health check; then the release that was rolled back is removed from the target. Afterwards there is no `previous` until the next deploy. The removed release is still in the repository and can be deployed again from there.
+Activation per class: tiles = upload to the S3 release, write `current.json` last, write `PMTILES_URL` into `tiles-release.env` and force-recreate tilesservice (until it reloads on `current.json` itself); valhalla = per-region container restart; pelias = unpack the snapshot into `es_snapshots/<tag>/<region>`, register repository `dm_<tag>_<region>`, restore the index (skipped when present; `pelias.json` pins the concrete index name, so there is no alias switch), flip `current`, restart pip/api/interpolation; geodata = restart regionservice. Order and rationale in migration doc §3 (region names must agree across classes).
 
 State truth is on the **target** (`current` symlinks); `deploy-state/<config key>/state.json` is only a cache refreshed by `describe_state`.
 
@@ -113,13 +115,13 @@ A class target may set `transport: "s3"` instead of the default `rsync`; first u
 ```json
 "tiles": {"transport": "s3", "endpoint": "https://s3.dev-mini.example", "region": "garage", "bucket": "swayrider-tiles",
           "credentials": {"access_key_env": "DM_S3_ACCESS_KEY", "secret_key_env": "DM_S3_SECRET_KEY"},
-          "keep_releases": 2, "ready_url": "http://tilesservice.internal/v1/tiles/ready"}
+          "ready_url": "http://tilesservice.internal/v1/tiles/ready"}
 ```
 - `transfer`: upload `releases/<tag>/…` objects (multipart for large parts; resumable by skipping objects whose size and recorded checksum already match); the object key layout is the tiles contract in `SERVICES.md`.
 - `verify`: size plus checksum (S3 additional SHA-256 where the store supports it, else a `sha256` object metadata value written at upload; optional full read-back, same cost trade-off as §7.6).
 - `finalize`: write `current.json` **last** (single PUT = atomic switch); keep the previous pointer value for rollback.
 - `activate`: none; `tilesservice` polls the pointer. Health check: the service's readiness endpoint reports the new release id within a timeout, otherwise the pointer is written back (automatic rollback).
-- Retention: delete `releases/<old>/` prefixes beyond `keep_releases`, never the current or previous.
+- Retention as §3.2 step 5: only the `current` and `previous` release prefixes stay.
 - Credentials come from the environment of the data-manager process, never from the package or the stored configuration; the key needs write access to this bucket only.
 - Rollback: deploy the previous tag (objects are usually still there; the transfer step then skips everything and only rewrites the pointer).
 
@@ -127,10 +129,11 @@ A class target may set `transport: "s3"` instead of the default `rsync`; first u
 Anything that can map the same package parts onto its own storage and activation (e.g. k8s: PVC/object-store upload + rollout restart). Out of scope now; the interface in §3.1 must not assume symlinks or rsync.
 
 ## 4. Deploy (record and semantics)
-`deployment(id, package_id→, deploy_config_id→, classes_json, status[planned|running|succeeded|failed|rolled_back], previous_package_id→ (per class in `detail_json`), started_at, finished_at, triggered_by, build_run_id→, detail_json)`.
+`deployment(id, package_id→, deploy_config_id→, classes_json, status[running|succeeded|failed|rolled_back], package_tag (kept when the package is deleted later; `package_id` becomes NULL), previous_package_id→ (per class in `detail_json`), started_at, finished_at, triggered_by, build_run_id→, detail_json)`.
 - Inputs: package tag + deploy config key + optional class subset (**partial deploys allowed**; the cross-class consistency warning is shown when the resulting live set mixes tags).
 - Steps run in `activation_order`; a failed class stops the sequence; classes already activated stay (state is visible in `describe_state`), the deploy is `failed` with per-class results; re-running resumes.
-- Rollback: UI/CLI "deploy previous tag" = the same deploy against the `previous` tag of that class; recorded with `rolled_back_from`.
+- Rollback: UI/CLI = `current` back to `previous` (§3.2 step 6); recorded as a new deployment with `rolled_back_from`.
+- Settings group `deploy`: `deploy.verify` (`full` default | `size`), `deploy.health_timeout` (seconds). Migration 0021 creates `deploy_config` and `deployment`; `DeployError` is the error type.
 - Concurrency: one running deploy per deploy config (lock row / RQ single worker queue).
 - Traceability: `deployment → package → package_item → asset/download → build_run → config` (the existing one-join story).
 

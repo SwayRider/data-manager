@@ -108,12 +108,37 @@ def detail(tag: str):
 def labels(tag: str):
     package = _package_or_404(tag)
     try:
-        packages.edit_labels(SessionLocal(), tag, labels=packages.parse_labels(request.form.get("labels", "")),
+        packages.edit_labels(SessionLocal(), tag, labels=packages.parse_labels("\n".join(request.form.getlist("labels"))),
                              note=request.form.get("note", ""), protected=bool(request.form.get("protected")))
     except PackageError as exc:
         SessionLocal().rollback()
         return render_template("repo/detail.html", **_detail_context(package, error=exc.message, )), 422
     return redirect(url_for("repo.detail", tag=package.tag), code=303)
+
+
+def _label_action(tag: str, action):
+    package = _package_or_404(tag)
+    try:
+        action(SessionLocal())
+    except PackageError as exc:
+        SessionLocal().rollback()
+        return render_template("repo/detail.html", **_detail_context(package, error=exc.message, )), 422
+    return redirect(url_for("repo.detail", tag=package.tag), code=303)
+
+
+@bp.post("/<tag>/labels/add")
+def label_add(tag: str):
+    return _label_action(tag, lambda s: packages.add_label(s, tag, request.form.get("label", "")))
+
+
+@bp.post("/<tag>/labels/change")
+def label_change(tag: str):
+    return _label_action(tag, lambda s: packages.change_label(s, tag, request.form.get("old", ""), request.form.get("label", "")))
+
+
+@bp.post("/<tag>/labels/remove")
+def label_remove(tag: str):
+    return _label_action(tag, lambda s: packages.remove_label(s, tag, request.form.get("old", "")))
 
 
 @bp.post("/<tag>/verify")

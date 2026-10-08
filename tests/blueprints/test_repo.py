@@ -57,9 +57,9 @@ def test_list_detail_labels_and_filters(client, package):
     assert package.tag in client.get("/repo/?class=valhalla").get_data(as_text=True)
     detail = client.get(f"/repo/{package.tag}").get_data(as_text=True)
     assert "valhalla_tiles.tar" in detail and "tool.valhalla" in detail and "Cleanup stage on Build" in detail and "unverified" in detail
-    client.post(f"/repo/{package.tag}/labels", data={"labels": "live=dev-mini", "note": "n1", "protected": "1"})
+    client.post(f"/repo/{package.tag}/labels", data={"labels": "for=dev-mini", "note": "n1", "protected": "1"})
     again = client.get(f"/repo/{package.tag}").get_data(as_text=True)
-    assert "live=dev-mini" in again and "protected" in again
+    assert "for=dev-mini" in again and "protected" in again
     assert client.post(f"/repo/{package.tag}/delete").status_code == 422
     assert client.get("/repo/r-nope").status_code == 404
 
@@ -145,7 +145,7 @@ def test_each_class_is_its_own_step_with_its_own_total(cfg):
     package = pk.create_package(SessionLocal(), cfg.id, ["valhalla", "geodata"], step=steps.append,
                                 progress=lambda d, t, m: calls.append((len(steps), d, t)))
     assert steps == ["Copy valhalla", "Copy geodata"]
-    by_class = {c: sum(i.size_bytes for i in package.items if i.class_ == c) for c in ("valhalla", "geodata")}
+    by_class = {c: sum(i.size_bytes for i in package.items if i.class_ == c and i.kind != "manifest") for c in ("valhalla", "geodata")}
     assert {t for n, d, t in calls if n == 1} == {by_class["valhalla"]} and {t for n, d, t in calls if n == 2} == {by_class["geodata"]}
 
 
@@ -161,3 +161,30 @@ def test_overall_total_spans_all_steps(cfg):
     first, last = messages[0].split(" · "), messages[-1].split(" · ")
     assert first[-1].endswith(f"/ {pk._human(total)}") and last[-1] == f"{pk._human(total)} / {pk._human(total)}"
     assert last[0].startswith("geodata/") and last[1] == "2/2"  # the last step has its own file count and total
+
+
+def test_labels_can_be_added_changed_and_removed_one_by_one(client, package):
+    base = f"/repo/{package.tag}/labels"
+    assert client.post(f"{base}/add", data={"label": "v1.0.1"}).status_code == 303
+    assert client.post(f"{base}/add", data={"label": "for=test"}).status_code == 303
+    user = lambda: {l.key: l.value for l in SessionLocal().query(Package).one().labels if l.origin == "user"}
+    assert {"v1.0.1": "", "for": "test"}.items() <= user().items()
+
+    assert client.post(f"{base}/change", data={"old": "v1.0.1", "label": "v1.0.2"}).status_code == 303
+    assert "v1.0.1" not in user() and "v1.0.2" in user()
+    assert client.post(f"{base}/remove", data={"old": "for"}).status_code == 303
+    assert "for" not in user() and "v1.0.2" in user()
+    assert (client.get(f"/repo/{package.tag}").status_code, b"v1.0.2" in client.get(f"/repo/{package.tag}").data) == (200, True)
+    # the note/protect form keeps all labels
+    client.post(f"/repo/{package.tag}/labels", data={"labels": ["v1.0.2", "keep"], "note": "x"})
+    assert {"v1.0.2", "keep"} <= set(user())
+
+
+def test_bare_labels_are_unique_and_never_a_package_tag(client, cfg, package):
+    other = packages.create_package(SessionLocal(), cfg.id, ["valhalla"], labels={"v2": ""})
+    other_tag = other.tag
+    assert other_tag != package.tag
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": "v2"}).status_code == 422
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": other_tag}).status_code == 422
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": "v2=ok"}).status_code == 303  # key=value is not a name
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": "live"}).status_code == 422  # reserved
