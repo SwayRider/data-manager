@@ -18,7 +18,7 @@ Every step ends with something to check; stop at the first thing that does not m
 1. In the `layer-*/.env` files set the roots: `VALHALLA_ROOT`, `PELIAS_ROOT`, `GEODATA_ROOT`, `TILES_ROOT`, `ES_SNAPSHOTS_PATH`, and the Garage data/meta paths (see each `env.example`).
 2. `./scripts/prepare-host.sh --apply` in `infra/dev-mini` (run it without `--apply` first to read the plan): creates the root directories shared through the group, gives the Elasticsearch data and Valhalla scratch directories to their service uid, and reports `vm.max_map_count` and free space.
 3. Start the base services: `layer-00` (Traefik, Elasticsearch, PostgreSQL, Redis, Garage) and run `./garage/smoke-test.sh`.
-4. Start everything that is **not bound to a release**: the rest of `layer-10` (at least `pelias-libpostal`) and `layer-20` (auth, mail, router, search, ...). The services that read a release directory (`valhalla-*`, `pelias-placeholder`, `pelias-*-pip|interpolation|api`, `regionservice`, `tilesservice`) are created by the deploy: their compose files do not start them before the first release exists (`create_host_path: false`), so do not start them yourself.
+4. Start everything that is **not bound to a release**: `layer-20` (at least `authservice`; mail, router, search too). `pelias-libpostal` is started by the pelias deploy (`ensure`), you may start it yourself. The services that read a release directory (`valhalla-*`, `pelias-placeholder`, `pelias-*-pip|interpolation|api`, `regionservice`, `tilesservice`) are created by the deploy: their compose files do not start them before the first release exists (`create_host_path: false`), so do not start them yourself.
 
 ## 2. Create the deploy configuration
 ```

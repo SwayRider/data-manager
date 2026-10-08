@@ -41,6 +41,12 @@ def compose_recreate(compose_file: str, service: str) -> None:
     run(["compose", "-f", compose_file, "up", "-d", "--no-deps", "--force-recreate", service], timeout=900)
 
 
+def compose_ensure(compose_file: str, service: str) -> None:
+    """Make sure a service that does not depend on a release (e.g. libpostal) is running: start it when it is not, leave it
+    alone when it is (no recreate)."""
+    run(["compose", "-f", compose_file, "up", "-d", "--no-deps", service], timeout=900)
+
+
 def compose_container(compose_file: str, service: str) -> str:
     proc = run(["compose", "-f", compose_file, "ps", "-q", "-a", service], timeout=60, check=False)
     ident = (proc.stdout or "").strip().splitlines()

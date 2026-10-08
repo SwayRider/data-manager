@@ -3,7 +3,8 @@
 `activate` blocks of a deploy configuration (`RELEASE-CONTRACT.md` §3.2):
   {"type": "compose-restart", "services": {"benelux": "valhalla-benelux", ...}}      per region, or {"all": "regionservice"}
   {"type": "pelias-restore", "es_url": "http://localhost:39200", "restart": {"region": ["pelias-{region}-pip", ...],
-                                                                            "shared": ["pelias-placeholder"]}}
+                                                                            "shared": ["pelias-placeholder"]},
+   "ensure": ["pelias-libpostal"]}      services that must run but do not depend on a release: started when missing, not recreated
 With `"compose_file": "<path>"` in the block the names are compose services and are (re)created with `docker compose up -d
 --no-deps --force-recreate` (needed at the first deploy, when the containers do not exist yet); without it they are
 container names and `docker restart` is used, which also re-resolves the bind-mounted `current` symlink."""
@@ -26,6 +27,14 @@ def _restart(ctx: ActivationContext, name: str) -> None:
     docker.compose_recreate(compose, name) if compose else docker.restart(name)
 
 
+def _ensure(ctx: ActivationContext) -> None:
+    """`ensure`: compose services that are not tied to a release but must run (started when missing, never recreated)."""
+    compose = ctx.settings.get("compose_file")
+    if compose:
+        for name in ctx.settings.get("ensure", []):
+            docker.compose_ensure(compose, name)
+
+
 def _containers(ctx: ActivationContext, names: list[str]) -> list[str]:
     compose = ctx.settings.get("compose_file")
     return [docker.compose_container(compose, n) for n in names] if compose else names
@@ -45,6 +54,7 @@ class ComposeRestart(Activator):
         return names
 
     def activate(self, ctx: ActivationContext) -> None:
+        _ensure(ctx)
         for name in self._containers(ctx):
             _restart(ctx, name)
 
@@ -100,6 +110,7 @@ class PeliasRestore(Activator):
                               {"indices": index, "include_global_state": False})
             if (answer.get("snapshot", {}).get("shards", {}).get("failed", 1)):
                 raise DeployError(f"{region}: restoring {index} failed: {json.dumps(answer)[:300]}")
+        _ensure(ctx)
         for name in self._containers(ctx):
             _restart(ctx, name)
 

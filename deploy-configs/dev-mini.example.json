@@ -46,7 +46,10 @@
           "shared": [
             "pelias-placeholder"
           ]
-        }
+        },
+        "ensure": [
+          "pelias-libpostal"
+        ]
       }
     },
     "tiles": {

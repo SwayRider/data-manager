@@ -183,3 +183,15 @@ def test_compose_mode_creates_the_services_so_the_first_deploy_works(tmp_path, f
     fake_docker.states["cid-valhalla-france"] = {"Status": "exited", "Running": False}
     with pytest.raises(DeployError, match="cid-valhalla-france is exited"):
         ComposeRestart().check_health(ctx)  # health looks at the container compose created
+
+
+def test_ensure_starts_release_independent_services_without_recreating_them(tmp_path, fake_docker):
+    settings = {"compose_file": "/infra/layer-10/compose.yaml", "ensure": ["pelias-libpostal"],
+                "services": {"benelux": "valhalla-benelux"}}
+    ComposeRestart().activate(_ctx(tmp_path, regions=("benelux",), settings=settings))
+    up = [c for c in fake_docker.calls if c[0] == "compose" and "up" in c]
+    assert up[0] == ["compose", "-f", "/infra/layer-10/compose.yaml", "up", "-d", "--no-deps", "pelias-libpostal"]  # first, plain up
+    assert "--force-recreate" not in up[0] and fake_docker.recreated() == ["valhalla-benelux"]
+    fake_docker.calls.clear()
+    ComposeRestart().activate(_ctx(tmp_path, regions=("benelux",), settings={"ensure": ["x"], "services": {"benelux": "c"}}))
+    assert fake_docker.restarted() == ["c"] and not [c for c in fake_docker.calls if c[0] == "compose"]  # no compose file: nothing to ensure
