@@ -534,11 +534,61 @@ def get(session: Session, tag: str) -> Package:
     return package
 
 
+def check_unique(session: Session, package: Package, labels: dict[str, str]) -> None:
+    """A bare label (no value, like `v1.0.1`) names one package: it may not equal a package tag nor sit on another package,
+    so `deploy --tag <label>` is unambiguous."""
+    for key, value in labels.items():
+        if value:
+            continue
+        if key != package.tag and session.query(Package).filter_by(tag=key).first():
+            raise PackageError(f"'{key}' is the tag of another package", duplicate=key)
+        other = (session.query(PackageLabel).join(Package).filter(PackageLabel.key == key, PackageLabel.value == "",
+                                                                 PackageLabel.origin == "user", Package.id != package.id).first())
+        if other:
+            raise PackageError(f"The label '{key}' is already on {other.package.tag}", duplicate=key)
+
+
+def user_labels(package: Package) -> dict[str, str]:
+    return {l.key: l.value for l in package.labels if l.origin == "user"}
+
+
+def add_label(session: Session, tag: str, text: str) -> Package:
+    """Add (or overwrite the value of) `key=value` / bare labels given as text."""
+    package = get(session, tag)
+    new = parse_labels(text)
+    if not new:
+        raise PackageError("Enter a label like v1.0.1 or for=test")
+    return edit_labels(session, tag, labels={**user_labels(package), **new})
+
+
+def change_label(session: Session, tag: str, old_key: str, text: str) -> Package:
+    """Replace the label `old_key` by the (single) label in `text`."""
+    package = get(session, tag)
+    current = user_labels(package)
+    if old_key not in current:
+        raise PackageError(f"No such label: {old_key}")
+    new = parse_labels(text)
+    if len(new) != 1:
+        raise PackageError("Give exactly one label, like v1.0.1 or for=test")
+    del current[old_key]
+    return edit_labels(session, tag, labels={**current, **new})
+
+
+def remove_label(session: Session, tag: str, key: str) -> Package:
+    package = get(session, tag)
+    current = user_labels(package)
+    if key not in current:
+        raise PackageError(f"No such label: {key}")
+    del current[key]
+    return edit_labels(session, tag, labels=current)
+
+
 def edit_labels(session: Session, tag: str, labels: dict[str, str] | None = None, note: str | None = None,
                 protected: bool | None = None) -> Package:
     package = get(session, tag)
     if labels is not None:
         check_labels(labels)
+        check_unique(session, package, labels)
         session.query(PackageLabel).filter_by(package_id=package.id, origin="user").delete(synchronize_session="fetch")
         for key, value in labels.items():
             session.add(PackageLabel(package_id=package.id, key=key, value=value, origin="user"))

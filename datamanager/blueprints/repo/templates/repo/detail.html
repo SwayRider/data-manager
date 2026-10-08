@@ -18,10 +18,25 @@
 </table>
 
 <h2>Labels</h2>
+<p class="hint">Your own labels: a bare name like <code>v1.0.1</code> or <code>test-20261007</code> (unique across the repository, usable as <code>deploy --tag</code>) or <code>key=value</code>. The tags below are fixed.</p>
+<table class="resolved-table">
+  {% for l in user %}
+  <tr><td>
+    <form class="form-actions" method="post" action="{{ url_for('repo.label_change', tag=package.tag) }}">
+      <input type="hidden" name="old" value="{{ l.key }}">
+      <input type="text" name="label" value="{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}" maxlength="400" aria-label="Label">
+      <button>Change</button>
+      <button class="danger" formaction="{{ url_for('repo.label_remove', tag=package.tag) }}">Remove</button>
+    </form></td></tr>
+  {% else %}<tr><td class="muted">No labels yet.</td></tr>{% endfor %}
+  <tr><td>
+    <form class="form-actions" method="post" action="{{ url_for('repo.label_add', tag=package.tag) }}">
+      <input type="text" name="label" placeholder="v1.0.1" maxlength="400" aria-label="New label">
+      <button class="primary">Add label</button>
+    </form></td></tr>
+</table>
 <form class="stacked-form" method="post" action="{{ url_for('repo.labels', tag=package.tag) }}">
-  <label class="field"><span>Extra labels <span class="hint">one per line: <code>key=value</code> or a bare label; the tags below are fixed</span></span>
-    <textarea name="labels" rows="3" placeholder="candidate&#10;live=dev-mini">{% for l in user %}{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}
-{% endfor %}</textarea></label>
+  {% for l in user %}<input type="hidden" name="labels" value="{{ l.key }}{% if l.value %}={{ l.value }}{% endif %}">{% endfor %}
   <label class="field"><span>Note</span><input type="text" name="note" value="{{ package.note }}" maxlength="500"></label>
   <div class="check-list"><label><input type="checkbox" name="protected" value="1" {{ 'checked' if package.protected }}>
     <span>Protected <span class="hint">never pruned or deleted</span></span></label></div>

@@ -161,3 +161,30 @@ def test_overall_total_spans_all_steps(cfg):
     first, last = messages[0].split(" · "), messages[-1].split(" · ")
     assert first[-1].endswith(f"/ {pk._human(total)}") and last[-1] == f"{pk._human(total)} / {pk._human(total)}"
     assert last[0].startswith("geodata/") and last[1] == "2/2"  # the last step has its own file count and total
+
+
+def test_labels_can_be_added_changed_and_removed_one_by_one(client, package):
+    base = f"/repo/{package.tag}/labels"
+    assert client.post(f"{base}/add", data={"label": "v1.0.1"}).status_code == 303
+    assert client.post(f"{base}/add", data={"label": "for=test"}).status_code == 303
+    user = lambda: {l.key: l.value for l in SessionLocal().query(Package).one().labels if l.origin == "user"}
+    assert {"v1.0.1": "", "for": "test"}.items() <= user().items()
+
+    assert client.post(f"{base}/change", data={"old": "v1.0.1", "label": "v1.0.2"}).status_code == 303
+    assert "v1.0.1" not in user() and "v1.0.2" in user()
+    assert client.post(f"{base}/remove", data={"old": "for"}).status_code == 303
+    assert "for" not in user() and "v1.0.2" in user()
+    assert (client.get(f"/repo/{package.tag}").status_code, b"v1.0.2" in client.get(f"/repo/{package.tag}").data) == (200, True)
+    # the note/protect form keeps all labels
+    client.post(f"/repo/{package.tag}/labels", data={"labels": ["v1.0.2", "keep"], "note": "x"})
+    assert {"v1.0.2", "keep"} <= set(user())
+
+
+def test_bare_labels_are_unique_and_never_a_package_tag(client, cfg, package):
+    other = packages.create_package(SessionLocal(), cfg.id, ["valhalla"], labels={"v2": ""})
+    other_tag = other.tag
+    assert other_tag != package.tag
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": "v2"}).status_code == 422
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": other_tag}).status_code == 422
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": "v2=ok"}).status_code == 303  # key=value is not a name
+    assert client.post(f"/repo/{package.tag}/labels/add", data={"label": "live"}).status_code == 422  # reserved
