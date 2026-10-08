@@ -27,7 +27,7 @@ def save_config(session: Session, key: str, config: dict, description: str = "")
     problems = get_driver(driver_key).validate_config(config)
     if problems:
         raise DeployError("Invalid deploy configuration: " + "; ".join(problems), problems=problems)
-    if not key or not key.replace("-", "").replace("_", "").isalnum():
+    if not key or key == "new" or not key.replace("-", "").replace("_", "").isalnum():
         raise DeployError("The configuration key may only contain letters, digits, dashes and underscores")
     row = session.query(DeployConfig).filter_by(key=key).first()
     if row is None:
@@ -119,15 +119,25 @@ def plan(session: Session, config_key: str, package_ref: str | None, classes: li
 
 # ---- run ----------------------------------------------------------------------------------------------------------
 
-def _guard_single_run(session: Session, config: DeployConfig) -> None:
-    """One running deploy per configuration. A `running` row whose run is gone (worker died) is marked failed."""
+def active_deployment(session: Session, config: DeployConfig) -> Deployment | None:
+    """The deploy of this configuration that is running now. A `running` row whose run is gone (worker died) is marked failed."""
+    active = None
     for row in session.query(Deployment).filter_by(deploy_config_id=config.id, status="running").all():
         run = session.get(BuildRun, row.build_run_id) if row.build_run_id else None
         if run is not None and run.status in ("queued", "running"):
-            raise DeployError(f"Deploy {row.id} of {row.package_tag} to {config.key} is still running")
+            active = row
+            continue
         row.status, row.finished_at = "failed", _now()
         row.detail_json = {**row.detail_json, "error": "interrupted (the run is no longer active)"}
     session.commit()
+    return active
+
+
+def _guard_single_run(session: Session, config: DeployConfig) -> None:
+    """One running deploy per configuration."""
+    row = active_deployment(session, config)
+    if row is not None:
+        raise DeployError(f"Deploy {row.id} of {row.package_tag} to {config.key} is still running")
 
 
 def _refresh_live_labels(session: Session, config: DeployConfig, driver: DeployDriver) -> None:

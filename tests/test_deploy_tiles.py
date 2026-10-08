@@ -97,6 +97,8 @@ def docker_calls(monkeypatch):
         calls.append(args)
         if args[0] == "inspect":
             return SimpleNamespace(returncode=0, stdout=json.dumps(state), stderr="")
+        if args[0] == "compose" and "ps" in args:
+            return SimpleNamespace(returncode=0, stdout=f"cid-{args[-1]}\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(docker, "run", fake)
@@ -110,7 +112,7 @@ def driver(tmp_path, s3, docker_calls):
     block = {"transport": "s3", "endpoint": "http://127.0.0.1:39000", "bucket": "swayrider-tiles", "region": "garage",
              "credentials": {"access_key_env": "DM_S3_ACCESS_KEY", "secret_key_env": "DM_S3_SECRET_KEY"},
              "activate": {"type": "tilesservice-env", "env_file": str(tmp_path / "tiles-release.env"),
-                          "compose_file": str(tmp_path / "compose.yml"), "service": "tilesservice", "container": "sw-dev-tilesservice"}}
+                          "compose_file": str(tmp_path / "compose.yml"), "service": "tilesservice"}}
     return ComposeSingleMachineDriver({"host": None, "classes": {"tiles": block}}, {"health_timeout": 0.05})
 
 
@@ -183,7 +185,7 @@ def test_unhealthy_tilesservice_switches_the_pointer_and_the_env_back(tmp_path, 
         driver.deploy_class(make_package(tmp_path, "r-2", "2"), "tiles")
     assert json.loads(s3.objects["current.json"][0])["release"] == "r-1" and "previous.json" not in s3.objects
     assert _env(tmp_path) == "PMTILES_URL=s3://swayrider-tiles/releases/r-1/tiles.pmtiles"
-    assert len([c for c in docker_calls if c[0] == "compose"]) == 3  # r-1, r-2, back to r-1
+    assert len([c for c in docker_calls if "--force-recreate" in c]) == 3  # r-1, r-2, back to r-1
 
 
 def test_failed_first_activation_removes_the_env_file(tmp_path, driver, s3, docker_calls):

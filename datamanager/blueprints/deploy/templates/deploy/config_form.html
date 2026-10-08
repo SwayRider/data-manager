@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit ' ~ row.key if row else 'New deploy configuration' }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('deploy.index') }}">&larr; Deploy</a></p>
+<h1>{{ 'Edit ' ~ row.key if row else 'New deploy configuration' }}</h1>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form class="stacked-form" method="post" action="{{ url_for('deploy.config_update', key=row.key) if row else url_for('deploy.config_create') }}">
+  <label class="field"><span>Key <span class="hint">letters, digits, dashes; names the environment, e.g. <code>dev-mini</code></span></span>
+    <input type="text" name="key" value="{{ key }}" maxlength="60" {{ 'readonly' if row else 'required' }}></label>
+  <label class="field"><span>Description</span><input type="text" name="description" value="{{ description }}" maxlength="300"></label>
+  <label class="field"><span>Configuration <span class="hint">JSON. Roots and container names of the environment. Secrets never go here: only the <em>names</em> of environment variables (<code>credentials</code>). See <code>RELEASE-CONTRACT.md</code> §3.</span></span>
+    <textarea name="config" rows="34" spellcheck="false" style="font-family: monospace; width: 100%">{{ config_text }}</textarea></label>
+  <div class="form-actions"><button class="primary">Save</button>
+    <a href="{{ url_for('deploy.workspace', key=row.key) if row else url_for('deploy.index') }}">Cancel</a></div>
+</form>
+{% if row %}
+<h2>Delete</h2>
+<form class="form-actions" method="post" action="{{ url_for('deploy.config_delete', key=row.key) }}"
+      onsubmit="return confirm('Delete the configuration {{ row.key }}?')">
+  <button class="danger" {{ 'disabled' if row.deployments }}>Delete configuration</button>
+  {% if row.deployments %}<span class="muted">It has deployments in its history.</span>{% endif %}
+</form>
+{% endif %}
+{% endblock %}

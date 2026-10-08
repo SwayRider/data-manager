@@ -1,0 +1,14 @@
+{% if history %}
+<table class="resolved-table">
+  <tr><th>#</th><th>Started (UTC)</th><th>Configuration</th><th>Package</th><th>What</th><th>Status</th><th>Run</th></tr>
+  {% for d in history %}
+  <tr><td>{{ d.id }}</td><td>{{ d.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      <td>{{ d.deploy_config.key }}</td>
+      <td>{% if d.package_id %}<a href="{{ url_for('repo.detail', tag=d.package_tag) }}">{{ d.package_tag }}</a>{% else %}{{ d.package_tag }} <span class="muted">(deleted)</span>{% endif %}</td>
+      <td>{{ 'rollback' if d.detail_json.get('rollback') else 'deploy' }}: {{ d.classes_json|join(', ') }}</td>
+      <td><span class="badge status-{{ {'succeeded': 'approved', 'rolled_back': 'rejected'}.get(d.status, d.status) }}">{{ d.status.replace('_', ' ') }}</span>
+          {% if d.detail_json.get('error') %}<div class="muted">{{ d.detail_json.error }}</div>{% endif %}</td>
+      <td>{% if d.build_run_id %}<a href="{{ url_for('build.run_detail', run_id=d.build_run_id) }}">run {{ d.build_run_id }}</a>{% endif %}</td></tr>
+  {% endfor %}
+</table>
+{% else %}<p class="empty-state">Nothing deployed yet.</p>{% endif %}

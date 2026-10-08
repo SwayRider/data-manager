@@ -23,10 +23,15 @@ class FakeDocker:
             name = args[-1]
             state = self.states.get(name, {"Status": "running", "Running": True})
             return SimpleNamespace(returncode=0 if state.get("Status") != "missing" else 1, stdout=json.dumps(state), stderr="")
+        if args[0] == "compose" and "ps" in args:
+            return SimpleNamespace(returncode=0, stdout=f"cid-{args[-1]}\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     def restarted(self):
         return [c[1] for c in self.calls if c[0] == "restart"]
+
+    def recreated(self):
+        return [c[-1] for c in self.calls if c[0] == "compose" and "--force-recreate" in c]
 
 
 @pytest.fixture()
@@ -166,3 +171,15 @@ def test_removing_a_release_drops_its_index_but_not_one_a_kept_release_still_use
 def test_unreadable_pelias_json_is_a_clear_error(tmp_path):
     with pytest.raises(DeployError, match="schema.indexName"):
         PeliasRestore.indices(tmp_path, "r-1", ("benelux",))
+
+
+def test_compose_mode_creates_the_services_so_the_first_deploy_works(tmp_path, fake_docker):
+    settings = {"compose_file": "/infra/layer-10/compose.yaml",
+                "services": {"benelux": "valhalla-benelux", "france": "valhalla-france"}}
+    ctx = _ctx(tmp_path, settings=settings)
+    ComposeRestart().activate(ctx)
+    assert fake_docker.recreated() == ["valhalla-benelux", "valhalla-france"] and not fake_docker.restarted()
+    assert ["compose", "-f", "/infra/layer-10/compose.yaml", "up", "-d", "--no-deps", "--force-recreate", "valhalla-benelux"] in fake_docker.calls
+    fake_docker.states["cid-valhalla-france"] = {"Status": "exited", "Running": False}
+    with pytest.raises(DeployError, match="cid-valhalla-france is exited"):
+        ComposeRestart().check_health(ctx)  # health looks at the container compose created

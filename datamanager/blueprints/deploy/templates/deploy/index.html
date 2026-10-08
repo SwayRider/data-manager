@@ -3,5 +3,23 @@
 {% block title %}Deploy{% endblock %}
 {% block content %}
 <h1>Deploy</h1>
-{{ empty_state("Publishing, deployment and rollback appear here (Phase 3).") }}
+<p class="muted">A deploy copies a verified package from the <a href="{{ url_for('repo.index') }}">Repo</a> to an environment, activates it and can put the environment back on its previous release. A target keeps only its <em>current</em> and <em>previous</em> release.</p>
+
+<h2>Configurations</h2>
+{% if configs %}
+<table class="resolved-table">
+  <tr><th>Configuration</th><th>Driver</th><th>Classes</th><th>Description</th><th></th></tr>
+  {% for c in configs %}
+  <tr><td><a href="{{ url_for('deploy.workspace', key=c.key) }}"><strong>{{ c.key }}</strong></a></td><td>{{ c.driver }}</td>
+      <td>{{ c.config_json.get('classes', {})|join(', ') }}</td><td>{{ c.description }}</td>
+      <td><a href="{{ url_for('deploy.workspace', key=c.key) }}">Deploy</a> · <a href="{{ url_for('deploy.config_edit', key=c.key) }}">Edit</a></td></tr>
+  {% endfor %}
+</table>
+{% else %}
+{{ empty_state("No deploy configuration yet. Create one for your environment (the example is prefilled).") }}
+{% endif %}
+<p><a href="{{ url_for('deploy.config_new') }}">New configuration</a></p>
+
+<h2>History</h2>
+{% include "deploy/_history.html" %}
 {% endblock %}

@@ -25,6 +25,8 @@ def env(tmp_path, app, monkeypatch):
 
     def fake_docker(args, timeout=300, check=True):
         from types import SimpleNamespace
+        if args[0] == "compose" and "ps" in args:
+            return SimpleNamespace(returncode=0, stdout=f"cid-{args[-1]}\n", stderr="")
         return SimpleNamespace(returncode=0, stdout=json.dumps(state), stderr="")
 
     monkeypatch.setattr(docker, "run", fake_docker)

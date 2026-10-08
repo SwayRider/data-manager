@@ -1,0 +1,16 @@
+{% if error %}<p class="error">{{ error }}</p>
+{% elif plan %}
+<table class="resolved-table">
+  <tr><th>Class</th><th>Parts</th><th>Size</th><th>To copy</th><th>Now current</th><th>Result</th></tr>
+  {% for e in plan.classes %}
+  <tr><td>{{ e.class }}</td><td>{{ e.parts }}</td><td>{{ e.bytes|filesize }}</td><td>{{ e.bytes_to_copy|filesize }}{% if e.present %} <span class="muted">(already on the target)</span>{% endif %}</td>
+      <td>{{ e.current or '-' }}</td><td>{% if e.skip %}skipped: {{ e.skip }}{% else %}becomes {{ plan.package }}, {{ e.current or 'nothing' }} turns into previous{% endif %}</td></tr>
+  {% endfor %}
+</table>
+<p class="muted">After the deploy the target holds only {{ plan.package }} and the release that is current now; anything older is removed from the target.</p>
+{% for w in plan.warnings %}<p class="warn-line">{{ w }}</p>{% endfor %}
+{% for p in plan.problems %}<p class="error">{{ p }}</p>{% endfor %}
+{% if active %}<p class="warn-line">A deploy to this configuration is still running (<a href="{{ url_for('build.run_detail', run_id=active.build_run_id) }}">run {{ active.build_run_id }}</a>).</p>{% endif %}
+<div class="form-actions"><button class="primary" {% if plan.problems or active %}disabled{% endif %}>Start deploy of {{ plan.package }}</button>
+  <span class="muted">Runs in the worker; the services of each class restart when its release is activated.</span></div>
+{% endif %}
