@@ -9,6 +9,7 @@ With `"compose_file": "<path>"` in the block the names are compose services and 
 --no-deps --force-recreate` (needed at the first deploy, when the containers do not exist yet); without it they are
 container names and `docker restart` is used, which also re-resolves the bind-mounted `current` symlink."""
 import json
+import shutil
 from pathlib import Path
 
 import requests
@@ -124,6 +125,12 @@ class PeliasRestore(Activator):
             if self._es(ctx, "HEAD", f"/{index}", missing_ok=True) is not None:
                 continue  # the same index came with an earlier release (a repackaged build)
             repo = f"dm_{ctx.tag}_{region}"
+            snapshot_dir = Path(ctx.options["es_snapshots"]) / ctx.tag / region
+            if not snapshot_dir.is_dir():
+                raise DeployError(
+                    f"{region}: index {index} is not in Elasticsearch and its unpacked snapshot ({snapshot_dir}) is gone: "
+                    f"the snapshot is removed after a release went live. Remove the release {ctx.tag} from the target "
+                    f"(deploy another release, or delete releases/{ctx.tag}) and deploy it again.")
             self._es(ctx, "PUT", f"/_snapshot/{repo}", {"type": "fs", "settings": {
                 "location": f"{SNAPSHOT_MOUNT}/{ctx.tag}/{region}", "readonly": True}})
             answer = self._es(ctx, "POST", f"/_snapshot/{repo}/{index}/_restore?wait_for_completion=true",
@@ -141,6 +148,15 @@ class PeliasRestore(Activator):
             if count == 0:
                 raise DeployError(f"{region}: index {index} is empty")
         docker.wait_ready(_containers(ctx, self._containers(ctx)), float(ctx.options["health_timeout"]), ctx.settings.get("ready_urls"))
+
+    def finalize(self, ctx: ActivationContext) -> None:
+        """The restored indices live in Elasticsearch now: the unpacked snapshot (~165 GB per release) and its repository
+        registration are not needed any more. A later restore unpacks it again from the package."""
+        for region in ctx.regions:
+            self._es(ctx, "DELETE", f"/_snapshot/dm_{ctx.tag}_{region}", missing_ok=True)
+        unpacked = Path(ctx.options["es_snapshots"]) / ctx.tag
+        if unpacked.exists():
+            shutil.rmtree(unpacked)
 
     def release_removed(self, ctx: ActivationContext) -> None:
         """Drop the indices and snapshot repositories of a release that is removed, except an index that a release

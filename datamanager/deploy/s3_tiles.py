@@ -280,7 +280,10 @@ class TilesTransport:
         if plan["problems"]:
             raise DeployError("tiles: " + "; ".join(plan["problems"]), problems=plan["problems"])
         if plan["skip"]:
-            return {"class": "tiles", "status": "skipped", "reason": plan["skip"], "current": package.tag}
+            from datamanager.deploy import activators
+
+            return {"class": "tiles", "status": "skipped", "reason": plan["skip"], "current": package.tag,
+                    "warnings": activators.ensure_after(self.block.get("activate") or {})}
         tag = package.tag
         self._transfer(package, progress, step)
         if step:

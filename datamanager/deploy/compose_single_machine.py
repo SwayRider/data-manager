@@ -336,7 +336,7 @@ class ComposeSingleMachineDriver(DeployDriver):
     # ---- verify -------------------------------------------------------------------------------------------------
 
     def _verify(self, package: PackageView, class_: str, folder: Path, progress: ProgressCb | None,
-                step: StepCb | None) -> None:
+                step: StepCb | None, fresh: bool = True) -> None:
         mode = self.options["verify"]
         parts = package.of_class(class_)
         files = [(p, target_of(class_, p)) for p in parts]
@@ -356,6 +356,8 @@ class ComposeSingleMachineDriver(DeployDriver):
                         problems.append(f"{target.dest}: sha256 mismatch")
             else:
                 # unpacked content has no hash of its own: the source stream was hashed while unpacking
+                if target.kind == "snapshot" and not fresh:
+                    continue  # unpacked snapshots are removed once the release is live (the index lives in Elasticsearch)
                 where = (self._es_snapshots() / package.tag / target.dest) if target.kind == "snapshot" else folder / target.dest
                 if not where.exists():
                     problems.append(f"{target.dest}: missing")
@@ -438,8 +440,9 @@ class ComposeSingleMachineDriver(DeployDriver):
         plan = self.plan_class(package, class_)
         if plan["problems"]:
             raise DeployError(f"{class_}: " + "; ".join(plan["problems"]), problems=plan["problems"])
-        if plan["skip"]:
-            return {"class": class_, "status": "skipped", "reason": plan["skip"], "current": package.tag}
+        if plan["skip"]:  # nothing to copy, but the services around the class still get their chance to start
+            return {"class": class_, "status": "skipped", "reason": plan["skip"], "current": package.tag,
+                    "warnings": activators.ensure_after(self._block(class_).get("activate") or {})}
         root, tag = self.root(class_), package.tag
         final, partial = root / "releases" / tag, root / "releases" / f"{tag}.partial"
         root.mkdir(parents=True, exist_ok=True)
@@ -450,7 +453,7 @@ class ComposeSingleMachineDriver(DeployDriver):
                 step(f"Finalize {class_}")
             partial.rename(final)
         else:
-            self._verify(package, class_, final, progress, step)
+            self._verify(package, class_, final, progress, step, fresh=False)
         old_current = self._pointer(root, "current")
         before = self._flip(class_, tag, previous=old_current)
         try:
@@ -471,6 +474,10 @@ class ComposeSingleMachineDriver(DeployDriver):
             raise DeployError(f"{class_}: activation of {tag} failed ({exc}); "
                               + (f"switched back to {before['current']}" if before["current"] else "nothing was live before")) from exc
         warnings = activators.ensure_after(self._block(class_).get("activate") or {})
+        try:
+            self._activator(class_)[0].finalize(self._context(class_, tag))
+        except Exception as exc:  # the release is live; leftovers are only wasted space
+            warnings.append(f"cleanup after activation failed: {exc}")
         try:
             removed = self.prune_class(class_)
         except Exception as exc:  # the deploy itself succeeded

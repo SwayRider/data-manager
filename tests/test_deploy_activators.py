@@ -234,3 +234,53 @@ def test_ensure_blocks_are_validated():
     bad = {"ensure": {"services": ["a"]}, "classes": {"geodata": {"root": "/g", "activate": {"type": "none", "ensure_after": ["x"]}}}}
     text = " | ".join(ComposeSingleMachineDriver.validate_config(bad))
     assert "ensure:" in text and "ensure_after" in text
+
+
+def test_unpacked_snapshots_are_removed_once_the_release_is_live(tmp_path, pelias_driver, fake_es):
+    result = pelias_driver.deploy_class(make_package(tmp_path, "r-1"), "pelias")
+    assert result["status"] == "ok" and result["warnings"] == []
+    assert "pelias_benelux-1" in fake_es.indices  # the index lives in Elasticsearch now
+    assert not (tmp_path / "es/r-1").exists()  # the ~165 GB of unpacked snapshot are not needed any more
+    assert (tmp_path / "pelias/releases/r-1/benelux/pelias.json").is_file()  # the release itself stays
+    assert ("DELETE", "/_snapshot/dm_r-1_benelux") in fake_es.calls
+
+
+def test_a_gone_snapshot_with_a_gone_index_gives_a_clear_error_and_switches_back(tmp_path, pelias_driver, fake_es):
+    one, two = make_package(tmp_path, "r-1", "1"), make_package(tmp_path, "r-2", "2")
+    pelias_driver.deploy_class(one, "pelias")
+    pelias_driver.deploy_class(two, "pelias")
+    fake_es.indices.pop("pelias_benelux-1")  # r-1 is still on the target as previous, but its index was dropped by hand
+    with pytest.raises(DeployError, match="unpacked snapshot .* is gone"):
+        pelias_driver.deploy_class(one, "pelias")
+    state = pelias_driver.describe_state(["pelias"])["pelias"]
+    assert (state["current"], state["previous"]) == ("r-2", "r-1")  # switched back to what was live
+
+
+def test_a_failing_cleanup_after_activation_is_a_warning(tmp_path, pelias_driver, fake_es, monkeypatch):
+    real = fake_es.__call__
+
+    def flaky(method, url, json=None, timeout=None):
+        if method == "DELETE" and "_snapshot" in url and "dm_r-1_" in url:
+            raise OSError("elasticsearch hiccup")
+        return real(method, url, json=json, timeout=timeout)
+    monkeypatch.setattr("datamanager.deploy.activators.requests.request", flaky)
+    result = pelias_driver.deploy_class(make_package(tmp_path, "r-1"), "pelias")
+    assert result["status"] == "ok" and "cleanup after activation failed" in result["warnings"][0]
+
+
+def test_redeploying_the_previous_release_needs_no_snapshot_while_its_index_is_there(tmp_path, pelias_driver, fake_es):
+    one, two = make_package(tmp_path, "r-1", "1"), make_package(tmp_path, "r-2", "2")
+    pelias_driver.deploy_class(one, "pelias")
+    pelias_driver.deploy_class(two, "pelias")
+    result = pelias_driver.deploy_class(one, "pelias")  # the snapshots of r-1 are long gone, its index is not
+    assert result["status"] == "ok" and result["current"] == "r-1" and result["previous"] == "r-2"
+
+
+def test_deploying_the_current_release_again_still_starts_the_supporting_services(tmp_path, fake_docker):
+    driver = _driver(tmp_path)
+    package = make_package(tmp_path, "r-1")
+    driver.deploy_class(package, "geodata")
+    fake_docker.calls.clear()
+    result = driver.deploy_class(package, "geodata")
+    assert result["status"] == "skipped" and result["warnings"] == []
+    assert [c[-1] for c in fake_docker.calls if "up" in c] == ["routerservice"]  # not recreated, nothing was copied
