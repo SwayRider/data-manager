@@ -31,7 +31,8 @@
 
 {% if run.report_json %}
 <h2>Validation report</h2>
-{% if run.stage_key == 'cleanup' %}{% include "build/_report_cleanup.html" %}
+{% if run.stage_key == 'deploy' %}{% include "build/_report_deploy.html" %}
+{% elif run.stage_key == 'cleanup' %}{% include "build/_report_cleanup.html" %}
 {% elif run.stage_key in ('package', 'package-verify') %}{% include "build/_report_package.html" %}
 {% elif run.report_json.get('polygons') is not none %}{% include "build/_report_polygons.html" %}
 {% elif run.report_json.get('routing') is not none %}{% include "build/_report_valhalla.html" %}

@@ -140,6 +140,145 @@ def register_cli(app: Flask) -> None:
         victims = packages.prune(session, keep, dry_run=not apply_)
         click.echo(f"{'Deleted' if apply_ else 'Would delete'}: {', '.join(victims) or 'nothing'}")
 
+    @app.cli.command("deploy-config-save")
+    @click.argument("key")
+    @click.option("--file", "path", required=True, type=click.Path(exists=True, dir_okay=False), help="JSON file with the configuration.")
+    @click.option("--description", default="")
+    def deploy_config_save_command(key, path, description):
+        """Create or replace a deploy configuration (no secrets in it: only environment variable names)."""
+        import json
+
+        from datamanager.deploy import orchestrator
+        from datamanager.errors import DeployError
+
+        try:
+            row = orchestrator.save_config(SessionLocal(), key, json.loads(Path(path).read_text()), description)
+        except (DeployError, ValueError) as exc:
+            raise click.ClickException(getattr(exc, "message", str(exc)))
+        click.echo(f"Saved deploy configuration {row.key} ({row.driver})")
+
+    @app.cli.command("deploy-config-list")
+    def deploy_config_list_command():
+        """List the deploy configurations."""
+        from datamanager.models import DeployConfig
+
+        for row in SessionLocal().query(DeployConfig).order_by(DeployConfig.key):
+            click.echo(f"{row.key}  {row.driver}  classes: {', '.join(row.config_json.get('classes', {}))}  {row.description}")
+
+    def _deploy_error(exc):
+        return click.ClickException(getattr(exc, "message", str(exc)))
+
+    @app.cli.command("deploy-plan")
+    @click.option("--config", "config_key", required=True, help="Deploy configuration key, e.g. dev-mini.")
+    @click.option("--tag", default=None, help="Package tag or unique label (default: the newest verified package).")
+    @click.option("--classes", default="", help="Comma separated subset (default: all configured).")
+    def deploy_plan_command(config_key, tag, classes):
+        """Show what a deploy would do; changes nothing."""
+        from datamanager.deploy import orchestrator
+        from datamanager.errors import DeployError
+
+        try:
+            the_plan = orchestrator.plan(SessionLocal(), config_key, tag, [c for c in classes.split(",") if c])
+        except DeployError as exc:
+            raise _deploy_error(exc)
+        click.echo(f"Deploy {the_plan['package']} to {the_plan['config']}")
+        for entry in the_plan["classes"]:
+            what = f"skip ({entry['skip']})" if entry["skip"] else f"{entry['bytes_to_copy'] / 1e9:8.1f} GB to copy"
+            click.echo(f"  {entry['class']:9} {entry['parts']:4} part(s) {entry['bytes'] / 1e9:8.1f} GB  {what}  "
+                       f"current={entry['current']} previous={entry['previous']}")
+        for line in the_plan["warnings"]:
+            click.echo(f"  ~ {line}")
+        for line in the_plan["problems"]:
+            click.echo(f"  ! {line}")
+        if the_plan["problems"]:
+            raise click.ClickException("Not deployable as planned")
+
+    @app.cli.command("deploy")
+    @click.option("--config", "config_key", required=True)
+    @click.option("--tag", default=None, help="Package tag or unique label (default: the newest verified package).")
+    @click.option("--classes", default="", help="Comma separated subset (default: all configured).")
+    @click.option("--inline", is_flag=True, help="Run in this process instead of the worker (no Redis needed).")
+    def deploy_command(config_key, tag, classes, inline):
+        """Deploy a package to an environment, class by class (geodata, valhalla, pelias, tiles)."""
+        from datamanager.deploy import orchestrator
+        from datamanager.errors import DeployError
+        from datamanager.services import runs
+
+        session = SessionLocal()
+        wanted = [c for c in classes.split(",") if c]
+        try:
+            the_plan = orchestrator.plan(session, config_key, tag, wanted)
+            if the_plan["problems"]:
+                raise DeployError("; ".join(the_plan["problems"]))
+            package = orchestrator.resolve_package(session, tag)
+        except DeployError as exc:
+            raise _deploy_error(exc)
+        params = {"deploy_config": config_key, "tag": package.tag, "classes": wanted, "triggered_by": "cli"}
+        run = runs.create_run(session, "deploy", package.config_profile_id, params=params, triggered_by="cli")
+        _start_deploy_run(session, run, inline)
+
+    @app.cli.command("deploy-rollback")
+    @click.option("--config", "config_key", required=True)
+    @click.option("--classes", default="")
+    @click.option("--inline", is_flag=True)
+    def deploy_rollback_command(config_key, classes, inline):
+        """Put `current` back to `previous` on the target; the release that was rolled back is removed from it."""
+        from datamanager.deploy import orchestrator
+        from datamanager.errors import DeployError
+        from datamanager.services import runs
+
+        session = SessionLocal()
+        try:
+            current = orchestrator.state(session, config_key)
+            wanted = [c for c in classes.split(",") if c] or list(current)
+            missing = [c for c in wanted if not current.get(c, {}).get("previous")]
+            if missing:
+                raise DeployError(f"No previous release to roll back to for: {', '.join(missing)}")
+        except DeployError as exc:
+            raise _deploy_error(exc)
+        params = {"deploy_config": config_key, "classes": wanted, "rollback": True, "triggered_by": "cli"}
+        run = runs.create_run(session, "deploy", None, params=params, triggered_by="cli")
+        _start_deploy_run(session, run, inline)
+
+    def _start_deploy_run(session, run, inline):
+        from datamanager.services import runs
+
+        if inline:
+            from datamanager.jobs import tasks
+
+            result = tasks.run_stage(run.id)
+            session.refresh(run)
+            click.echo(f"Run {run.id}: {result['status']}")
+            summary = (run.report_json or {}).get("summary", {})
+            for name, r in summary.get("classes", {}).items():
+                click.echo(f"  {name:9} {r.get('status')}  current={r.get('current')}  {r.get('error', r.get('reason', ''))}")
+            if run.status != "awaiting_review" and result["status"] != "success" and (run.report_json or {}).get("error"):
+                raise click.ClickException(run.report_json["error"])
+            return
+        from datamanager.jobs.queue import queue
+
+        job = queue.enqueue("datamanager.jobs.tasks.run_stage", run.id, job_timeout=12 * 3600)
+        runs.set_job_id(session, run, job.id)
+        click.echo(f"Run {run.id} queued; follow it with `deploy-state` or on its run page.")
+
+    @app.cli.command("deploy-state")
+    @click.option("--config", "config_key", required=True)
+    def deploy_state_command(config_key):
+        """What is on the target now (read from the target) and the last deployments."""
+        from datamanager.deploy import orchestrator
+        from datamanager.errors import DeployError
+
+        session = SessionLocal()
+        try:
+            for name, entry in orchestrator.state(session, config_key).items():
+                click.echo(f"{name:9} current={entry['current']} previous={entry['previous']} releases={','.join(entry['releases'])}"
+                           + (f" partial={','.join(entry['partial'])}" if entry["partial"] else ""))
+            for d in orchestrator.history(session, config_key, 10):
+                click.echo(f"  deployment {d.id:3} {d.status:11} {d.package_tag:14} {'rollback ' if d.detail_json.get('rollback') else ''}"
+                           f"{','.join(d.classes_json)}  {d.started_at:%Y-%m-%d %H:%M}")
+        except DeployError as exc:
+            raise _deploy_error(exc)
+
     @app.cli.command("cleanup")
     @click.argument("tag")
     @click.option("--category", "categories", multiple=True, help="Category key; repeatable (default: those ticked in Settings).")

@@ -1,0 +1,33 @@
+{
+  "driver": "compose-single-machine",
+  "host": null,
+  "activation_order": ["geodata", "valhalla", "pelias", "tiles"],
+  "classes": {
+    "geodata": {
+      "root": "/path/to/geodata",
+      "activate": {"type": "compose-restart", "services": {"all": "sw-dev-regionservice"}}
+    },
+    "valhalla": {
+      "root": "/path/to/valhalla",
+      "activate": {"type": "compose-restart", "services": {
+        "benelux": "sw-dev-valhalla-benelux", "france": "sw-dev-valhalla-france", "germany": "sw-dev-valhalla-germany"}}
+    },
+    "pelias": {
+      "root": "/path/to/pelias",
+      "es_snapshots": "/path/to/elasticsearch/snapshots",
+      "activate": {"type": "pelias-restore", "es_url": "http://localhost:39200", "restart": {
+        "region": ["sw-dev-pelias-{region}-pip", "sw-dev-pelias-{region}-interpolation", "sw-dev-pelias-{region}-api"],
+        "shared": ["sw-dev-pelias-placeholder"]}}
+    },
+    "tiles": {
+      "transport": "s3",
+      "endpoint": "http://127.0.0.1:39000",
+      "region": "garage",
+      "bucket": "swayrider-tiles",
+      "credentials": {"access_key_env": "DM_S3_ACCESS_KEY", "secret_key_env": "DM_S3_SECRET_KEY"},
+      "activate": {"type": "tilesservice-env", "env_file": "/path/to/infra/dev-mini/layer-20/tiles-release.env",
+                   "compose_file": "/path/to/infra/dev-mini/layer-20/compose.yml", "service": "tilesservice",
+                   "container": "sw-dev-tilesservice"}
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{% set summary = run.report_json.get('summary', {}) %}
+<p>{{ 'Rollback' if summary.rollback else 'Deploy' }} of <strong>{{ summary.tag }}</strong> to <strong>{{ summary.config }}</strong>
+  (deployment {{ summary.deployment }}).</p>
+<table class="resolved-table">
+  <tr><th>Class</th><th>Result</th><th>Now current</th><th>Previous</th><th>Removed from the target</th></tr>
+  {% for name, r in summary.get('classes', {}).items() %}
+  <tr><td>{{ name }}</td><td>{{ r.status }}{% if r.reason %} ({{ r.reason }}){% endif %}{% if r.error %}: {{ r.error }}{% endif %}</td>
+      <td>{{ r.get('current') or '' }}</td><td>{{ r.get('previous') or r.get('rolled_back') or '' }}</td>
+      <td>{{ (r.get('removed') or [])|join(', ') }}</td></tr>
+  {% endfor %}
+</table>
+{% for line in run.report_json.get('warnings', []) %}<p class="warn-line">{{ line }}</p>{% endfor %}

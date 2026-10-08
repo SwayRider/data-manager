@@ -118,7 +118,7 @@ def enqueue_run(run_id: int) -> str:
     hours = 6
     if run is not None and run.stage_key in ("pelias", "pelias-interpolation"):
         hours = 48  # a Pelias import of a large region takes hours
-    elif run is not None and run.stage_key in ("package", "package-verify"):
+    elif run is not None and run.stage_key in ("package", "package-verify", "deploy"):
         hours = 12  # hashing and copying a few hundred GB onto a spinning disk
     return queue.enqueue("datamanager.jobs.tasks.run_stage", run_id, job_timeout=hours * 3600).id
 
