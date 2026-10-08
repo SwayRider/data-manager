@@ -29,6 +29,8 @@ python run_worker.py                     # RQ worker on queue "data-manager"
 ./debug.sh                               # dev server on :5050 + a worker (stopped on exit; NO_WORKER=1 to skip)
 ```
 
+`scripts/init-host.sh` prepares a new machine (the shared group `swdata`, the package repository permissions); it only shows what it would do unless run with `--apply`.
+
 The worker and any RQ-based tests need the dedicated Redis (`REDIS_URL`, default `redis://localhost:36389/0`) from `infra/data-manager/compose.yaml` in the separate `infra` repo — not the shared `sw-dev-redis` on 36379.
 
 ## Architecture

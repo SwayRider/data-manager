@@ -10,9 +10,13 @@ Every step ends with something to check; stop at the first thing that does not m
 - The Garage read/write key in the environment of data-manager **and its worker**: `DM_S3_ACCESS_KEY`, `DM_S3_SECRET_KEY` (the `GARAGE_RW_*` values of `layer-00/.env`). The configuration only stores these *names*.
 - Disk: the package is ~357 GB; each class root needs its size × 1.1 free for the first deploy, and after a second deploy the target holds `current` + `previous`. `/mnt/hdd-pool` has ~19 TB.
 
-## 1. Prepare the host (infra, once)
+## 1. Prepare the host (once per machine)
+0. **Shared access.** The directories are shared through a group (`swdata`, setgid, default ACL) so every administrator in it can package and deploy, and nobody locks the others out. Two scripts set this up and verify it; both show what they would do first (`--dry-run` is the default), and `--apply` asks *A* (run it, sudo asks for the password), *M* (do it yourself and press Enter) or *Q*, then checks again:
+   - `scripts/init-host.sh` in data-manager: the group, you in it, the acl tools, docker access, and `PACKAGE_ROOT` as a shared directory. On a new machine run this first.
+   - `infra/dev-mini/scripts/prepare-host.sh` (step 2 below): the same group for the deploy roots.
+   Another administrator is added with `sudo usermod -aG swdata <name>` (they log in again, or use `newgrp swdata`, before starting `./debug.sh` or the worker).
 1. In the `layer-*/.env` files set the roots: `VALHALLA_ROOT`, `PELIAS_ROOT`, `GEODATA_ROOT`, `TILES_ROOT`, `ES_SNAPSHOTS_PATH`, and the Garage data/meta paths (see each `env.example`).
-2. `./scripts/prepare-host.sh` in `infra/dev-mini`: creates the root directories with the right owner and reports `vm.max_map_count` and free space.
+2. `./scripts/prepare-host.sh --apply` in `infra/dev-mini` (run it without `--apply` first to read the plan): creates the root directories shared through the group, gives the Elasticsearch data and Valhalla scratch directories to their service uid, and reports `vm.max_map_count` and free space.
 3. Start the base services: `layer-00` (Traefik, Elasticsearch, PostgreSQL, Redis, Garage) and run `./garage/smoke-test.sh`.
 4. Start everything that is **not bound to a release**: the rest of `layer-10` (at least `pelias-libpostal`) and `layer-20` (auth, mail, router, search, ...). The services that read a release directory (`valhalla-*`, `pelias-placeholder`, `pelias-*-pip|interpolation|api`, `regionservice`, `tilesservice`) are created by the deploy: their compose files do not start them before the first release exists (`create_host_path: false`), so do not start them yourself.
 
