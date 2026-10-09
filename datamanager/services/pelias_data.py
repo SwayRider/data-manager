@@ -180,14 +180,14 @@ def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof
                      "hosts": [{"env": "development", "protocol": "http", "host": es_host, "port": es_port}],
                      "log": [{"type": "stdio", "json": False, "level": ["error", "warning"]}]},
         "elasticsearch": {"settings": {"index": {"number_of_replicas": "0", "number_of_shards": "1", "refresh_interval": "1m"}}},
-        # the deployed API asks the per-region interpolation service (street.db/address.db); the import has none
-        "interpolation": {"client": {"adapter": "http", "host": f"http://pelias-{layout.slug}-interpolation:{INTERPOLATION_PORT}"}
-                          if prod else {"adapter": "null"}},
+        # importers push nothing to the interpolation service; the deployed API asks it through api.services.interpolation
+        "interpolation": {"client": {"adapter": "null"}},
         "dbclient": {"statFrequency": 10000, "batchSize": 500},
         "api": {
             "accessLog": "common", "indexName": index,
             "services": {"placeholder": {"url": PLACEHOLDER_URL}, "libpostal": {"url": LIBPOSTAL_URL},
-                         "pip": {"url": f"http://pelias-{layout.slug}-pip:3102", "timeout": 1000, "retries": 2}},
+                         "pip": {"url": f"http://pelias-{layout.slug}-pip:3102", "timeout": 1000, "retries": 2},
+                         **({"interpolation": {"url": f"http://pelias-{layout.slug}-interpolation:{INTERPOLATION_PORT}"}} if prod else {})},
             "targets": {
                 "auto_discover": True,
                 "canonical_sources": ["whosonfirst", "openstreetmap", "openaddresses", "geonames"],

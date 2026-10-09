@@ -420,5 +420,7 @@ def test_production_config_points_at_the_interpolation_service_import_config_doe
     args = dict(index="pelias_benelux-1", es_host="elasticsearch", es_port=9200, wof_codes=["BE"], openaddresses=[])
     prod = pelias_data.render_config(layout, prod=True, **args)
     load = pelias_data.render_config(layout, prod=False, **args)
-    assert prod["interpolation"]["client"] == {"adapter": "http", "host": "http://pelias-benelux-interpolation:4300"}
+    assert prod["api"]["services"]["interpolation"] == {"url": "http://pelias-benelux-interpolation:4300"}  # what the API reads
+    assert prod["interpolation"]["client"] == {"adapter": "null"}
+    assert "interpolation" not in load["api"]["services"]
     assert load["interpolation"]["client"] == {"adapter": "null"}

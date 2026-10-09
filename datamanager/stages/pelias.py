@@ -17,7 +17,7 @@ from datamanager.services.polygons import slug
 from datamanager.services.valhalla_build import BuildError
 from datamanager.stages.contract import StageIO, StageResult, StageRunContext, StageRunner
 
-PLAN_VERSION = 5  # 5: the polylines are gunzipped for the importer (it read the gzip bytes as streets). 4: the production pelias.json points at the interpolation service. Bump when the layout of the imported data or the produced assets changes
+PLAN_VERSION = 6  # 6: the API config carries api.services.interpolation (the API ignored interpolation.client). 5: the polylines are gunzipped for the importer (it read the gzip bytes as streets). 4: the production pelias.json points at the interpolation service. Bump when the layout of the imported data or the produced assets changes
 ASSET_TYPES = {"snapshot": "pelias-index-snapshot", "config": "pelias-config", "wof": "pelias-wof"}
 LOG_TAIL = 15
 
