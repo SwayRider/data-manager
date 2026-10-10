@@ -1,0 +1,15 @@
+{% if error %}<p class="warn-line">Cannot read the target: {{ error }}</p>
+{% else %}
+<table class="resolved-table">
+  <tr><th>Class</th><th>Current</th><th>Previous</th><th>On the target</th><th>Location</th></tr>
+  {% for name, s in state.items() %}
+  <tr><td>{{ name }}</td>
+      <td>{% if s.current %}<a href="{{ url_for('repo.detail', tag=s.current) }}">{{ s.current }}</a>{% else %}<span class="muted">nothing</span>{% endif %}</td>
+      <td>{% if s.previous %}<a href="{{ url_for('repo.detail', tag=s.previous) }}">{{ s.previous }}</a>{% else %}<span class="muted">none</span>{% endif %}</td>
+      <td>{{ s.releases|join(', ') }}{% if s.partial %} <span class="warn-line">leftover: {{ s.partial|join(', ') }}</span>{% endif %}</td>
+      <td><code>{{ s.root }}</code></td></tr>
+  {% endfor %}
+</table>
+{% set tags = state.values()|map(attribute='current')|select|unique|list %}
+{% if tags|length > 1 %}<p class="warn-line">The classes run different packages: {% for n, s in state.items() %}{{ n }}={{ s.current or '-' }}{{ ', ' if not loop.last }}{% endfor %}.</p>{% endif %}
+{% endif %}

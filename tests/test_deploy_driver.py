@@ -312,3 +312,61 @@ def test_prune_dry_run_and_leftover_partials(tmp_path, driver):
     assert (tmp_path / "geodata/releases/r-old").exists()
     driver.prune_class("geodata")
     assert sorted(p.name for p in (tmp_path / "geodata/releases").iterdir()) == ["r-1"]
+
+
+# ---- dropping the previous release first -------------------------------------------------------------------------------
+
+def test_the_previous_release_can_be_removed_before_the_copy_starts(tmp_path, driver, recorder):
+    for n in (1, 2):
+        driver.deploy_class(make_package(tmp_path, f"r-{n}", str(n)), "pelias")
+    root = tmp_path / "pelias"
+    seen = {}
+
+    def step(label):
+        if label.startswith("Copy ") and "at_first_copy" not in seen:
+            seen["at_first_copy"] = sorted(p.name for p in (root / "releases").iterdir() if p.name != "r-3.partial"), (root / "previous").exists()
+    plan = driver.plan_class(make_package(tmp_path, "r-3", "3"), "pelias", drop_previous=True)
+    assert plan["drops_previous"] == "r-1" and plan["previous"] == "r-1"
+    result = driver.deploy_class(make_package(tmp_path, "r-3", "3"), "pelias", step=step, drop_previous=True)
+    assert seen["at_first_copy"] == (["r-2"], False)  # r-1 was gone (files, link, snapshots) before r-3 was copied
+    assert result["dropped_previous"] == "r-1" and result["previous"] == "r-2"
+    assert ("removed", "pelias", "r-1") in recorder.calls and not (tmp_path / "es/r-1").exists()
+    assert sorted(p.name for p in (root / "releases").iterdir()) == ["r-2", "r-3"]
+
+
+def test_a_failed_deploy_after_dropping_the_previous_keeps_current_but_has_no_rollback(tmp_path, driver, recorder):
+    for n in (1, 2):
+        driver.deploy_class(make_package(tmp_path, f"r-{n}", str(n)), "valhalla")
+    recorder.unhealthy = {"r-3"}
+    with pytest.raises(DeployError, match="switched back to r-2"):
+        driver.deploy_class(make_package(tmp_path, "r-3", "3"), "valhalla", drop_previous=True)
+    state = driver.describe_state(["valhalla"])["valhalla"]
+    assert state["current"] == "r-2" and state["previous"] is None  # still serving, but nothing to roll back to
+    with pytest.raises(DeployError, match="no previous release"):
+        driver.rollback_class("valhalla")
+
+
+def test_dropping_never_removes_the_release_that_is_being_deployed(tmp_path, driver):
+    one, two = make_package(tmp_path, "r-1", "1"), make_package(tmp_path, "r-2", "2")
+    driver.deploy_class(one, "geodata")
+    driver.deploy_class(two, "geodata")
+    plan = driver.plan_class(one, "geodata", drop_previous=True)  # r-1 is the previous one and also the one we deploy
+    assert plan["drops_previous"] is None
+    result = driver.deploy_class(one, "geodata", drop_previous=True)
+    assert result["current"] == "r-1" and result["previous"] == "r-2" and result["dropped_previous"] is None
+
+
+def test_the_space_check_counts_what_dropping_the_previous_frees(tmp_path, driver, monkeypatch):
+    import shutil
+    from collections import namedtuple
+    driver.deploy_class(make_package(tmp_path, "r-1", "1"), "valhalla")
+    driver.deploy_class(make_package(tmp_path, "r-2", "2"), "valhalla")
+    usage = namedtuple("usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: usage(1000, 990, 10))
+    package = make_package(tmp_path, "r-3", "3")
+    need = sum(p.size for p in package.of_class("valhalla"))
+    assert any("not enough free space" in x for x in driver.plan_class(package, "valhalla")["problems"])
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: usage(1000, 990, int(need * 1.1) - 40))
+    assert driver.plan_class(package, "valhalla")["problems"]  # not enough as it is
+    freed = driver.plan_class(package, "valhalla", drop_previous=True)  # r-1 is about the size of a release
+    assert freed["drops_previous"] == "r-1"

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Deploy {{ row.key }}{% endblock %}
+{% block content %}
+<p><a href="{{ url_for('deploy.index') }}">&larr; Deploy</a></p>
+<h1>{{ row.key }} <span class="muted">{{ row.driver }}</span></h1>
+{% if row.description %}<p class="muted">{{ row.description }}</p>{% endif %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<p><a href="{{ url_for('deploy.config_edit', key=row.key) }}">Edit configuration</a></p>
+
+<h2>Now on the target</h2>
+<div id="state" hx-get="{{ url_for('deploy.state', key=row.key) }}" hx-trigger="load" hx-swap="innerHTML"><p class="muted">Reading the target…</p></div>
+
+<h2>Deploy a package</h2>
+<form class="stacked-form" method="post" action="{{ url_for('deploy.start', key=row.key) }}"
+      hx-post="{{ url_for('deploy.plan', key=row.key) }}" hx-trigger="load, change" hx-target="#deploy-plan" hx-swap="innerHTML">
+  <label class="field"><span>Package <span class="hint">newest verified one preselected</span></span>
+    <select name="package">
+      {% for r in packages %}<option value="{{ r.p.tag }}" {{ 'selected' if r.default }}>{{ r.p.tag }} · {{ r.p.created_at.strftime('%Y-%m-%d') }} · {{ r.p.size_bytes|filesize }}
+        · {{ 'verified' if r.p.verified_at else 'NOT verified' }}{% for l in r.labels %} · {{ l.key }}{% if l.value %}={{ l.value }}{% endif %}{% endfor %}{% if r.live %} · live on {{ r.live|join(', ') }}{% endif %}</option>{% endfor %}
+    </select></label>
+  <fieldset><legend>Classes <span class="hint">deployed in this order</span></legend>
+    <div class="check-list">{% for c in classes %}<label><input type="checkbox" name="classes" value="{{ c }}" checked><span><strong>{{ c }}</strong></span></label>{% endfor %}</div>
+  </fieldset>
+  <div class="check-list"><label><input type="checkbox" name="drop_previous" value="1">
+    <span>Remove the previous release first <span class="hint">saves disk space during the deploy; until this deploy is healthy there is no release to roll back to</span></span></label></div>
+  <div id="deploy-plan" class="plan-panel"><p class="muted">Checking what would happen…</p></div>
+</form>
+
+<h2>Roll back</h2>
+<form class="stacked-form" method="post" action="{{ url_for('deploy.rollback', key=row.key) }}"
+      onsubmit="return confirm('Put the selected classes of {{ row.key }} back on their previous release? The release that is current now is removed from the target.')">
+  <p class="muted">Puts <em>current</em> back to <em>previous</em>, restarts the services, and removes the release that was rolled back from the target. After that there is no previous release until the next deploy; the package stays in the Repo.</p>
+  <div class="check-list">{% for c in classes %}<label><input type="checkbox" name="classes" value="{{ c }}" checked><span><strong>{{ c }}</strong></span></label>{% endfor %}</div>
+  <div class="form-actions"><button class="danger" {{ 'disabled' if active }}>Roll back</button></div>
+</form>
+
+<h2>History</h2>
+{% include "deploy/_history.html" %}
+{% endblock %}

@@ -23,10 +23,15 @@ class FakeDocker:
             name = args[-1]
             state = self.states.get(name, {"Status": "running", "Running": True})
             return SimpleNamespace(returncode=0 if state.get("Status") != "missing" else 1, stdout=json.dumps(state), stderr="")
+        if args[0] == "compose" and "ps" in args:
+            return SimpleNamespace(returncode=0, stdout=f"cid-{args[-1]}\n", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     def restarted(self):
         return [c[1] for c in self.calls if c[0] == "restart"]
+
+    def recreated(self):
+        return [c[-1] for c in self.calls if c[0] == "compose" and "--force-recreate" in c]
 
 
 @pytest.fixture()
@@ -166,3 +171,116 @@ def test_removing_a_release_drops_its_index_but_not_one_a_kept_release_still_use
 def test_unreadable_pelias_json_is_a_clear_error(tmp_path):
     with pytest.raises(DeployError, match="schema.indexName"):
         PeliasRestore.indices(tmp_path, "r-1", ("benelux",))
+
+
+def test_compose_mode_creates_the_services_so_the_first_deploy_works(tmp_path, fake_docker):
+    settings = {"compose_file": "/infra/layer-10/compose.yaml",
+                "services": {"benelux": "valhalla-benelux", "france": "valhalla-france"}}
+    ctx = _ctx(tmp_path, settings=settings)
+    ComposeRestart().activate(ctx)
+    assert fake_docker.recreated() == ["valhalla-benelux", "valhalla-france"] and not fake_docker.restarted()
+    assert ["compose", "-f", "/infra/layer-10/compose.yaml", "up", "-d", "--no-deps", "--force-recreate", "valhalla-benelux"] in fake_docker.calls
+    fake_docker.states["cid-valhalla-france"] = {"Status": "exited", "Running": False}
+    with pytest.raises(DeployError, match="cid-valhalla-france is exited"):
+        ComposeRestart().check_health(ctx)  # health looks at the container compose created
+
+
+def test_ensure_starts_release_independent_services_without_recreating_them(tmp_path, fake_docker):
+    settings = {"compose_file": "/infra/layer-10/compose.yaml", "ensure": ["pelias-libpostal"],
+                "services": {"benelux": "valhalla-benelux"}}
+    ComposeRestart().activate(_ctx(tmp_path, regions=("benelux",), settings=settings))
+    up = [c for c in fake_docker.calls if c[0] == "compose" and "up" in c]
+    assert up[0] == ["compose", "-f", "/infra/layer-10/compose.yaml", "up", "-d", "--no-deps", "pelias-libpostal"]  # first, plain up
+    assert "--force-recreate" not in up[0] and fake_docker.recreated() == ["valhalla-benelux"]
+    fake_docker.calls.clear()
+    ComposeRestart().activate(_ctx(tmp_path, regions=("benelux",), settings={"ensure": ["x"], "services": {"benelux": "c"}}))
+    assert fake_docker.restarted() == ["c"] and not [c for c in fake_docker.calls if c[0] == "compose"]  # no compose file: nothing to ensure
+
+
+def _driver(tmp_path, **extra):
+    config = {"host": None, "classes": {"geodata": {"root": str(tmp_path / "g"), "activate": {
+        "type": "compose-restart", "compose_file": "/infra/l20.yml", "services": {"all": "regionservice"},
+        "ensure_after": {"compose_file": "/infra/l20.yml", "services": ["routerservice"]}}}}, **extra}
+    return ComposeSingleMachineDriver(config, {"health_timeout": 0.05})
+
+
+def test_base_services_are_ensured_first_and_supporting_services_after(tmp_path, fake_docker):
+    driver = _driver(tmp_path, ensure={"compose_file": "/infra/l20.yml", "services": ["authservice", "mailservice"]})
+    assert driver.ensure_base() == []
+    assert [c[-1] for c in fake_docker.calls if "up" in c] == ["authservice", "mailservice"]
+    fake_docker.calls.clear()
+    result = driver.deploy_class(make_package(tmp_path, "r-1"), "geodata")
+    up = [(c[-1], "--force-recreate" in c) for c in fake_docker.calls if c[0] == "compose" and "up" in c]
+    assert up == [("regionservice", True), ("routerservice", False)]  # the class first, then what depends on it, never recreated
+    assert result["warnings"] == []
+
+
+def test_a_supporting_service_that_does_not_start_is_a_warning_not_a_failure(tmp_path, monkeypatch, fake_docker):
+    real = docker.compose_ensure
+
+    def failing(compose_file, service):
+        if service in ("mailservice", "routerservice"):
+            raise DeployError("no such image")
+        real(compose_file, service)
+    monkeypatch.setattr(docker, "compose_ensure", failing)
+    driver = _driver(tmp_path, ensure={"compose_file": "/infra/l20.yml", "services": ["authservice", "mailservice"]})
+    assert driver.ensure_base() == ["mailservice did not start: no such image"]
+    result = driver.deploy_class(make_package(tmp_path, "r-1"), "geodata")
+    assert result["status"] == "ok" and result["warnings"] == ["routerservice did not start: no such image"]
+    assert (tmp_path / "g/current").is_symlink()
+
+
+def test_ensure_blocks_are_validated():
+    bad = {"ensure": {"services": ["a"]}, "classes": {"geodata": {"root": "/g", "activate": {"type": "none", "ensure_after": ["x"]}}}}
+    text = " | ".join(ComposeSingleMachineDriver.validate_config(bad))
+    assert "ensure:" in text and "ensure_after" in text
+
+
+def test_unpacked_snapshots_are_removed_once_the_release_is_live(tmp_path, pelias_driver, fake_es):
+    result = pelias_driver.deploy_class(make_package(tmp_path, "r-1"), "pelias")
+    assert result["status"] == "ok" and result["warnings"] == []
+    assert "pelias_benelux-1" in fake_es.indices  # the index lives in Elasticsearch now
+    assert not (tmp_path / "es/r-1").exists()  # the ~165 GB of unpacked snapshot are not needed any more
+    assert (tmp_path / "pelias/releases/r-1/benelux/pelias.json").is_file()  # the release itself stays
+    assert ("DELETE", "/_snapshot/dm_r-1_benelux") in fake_es.calls
+
+
+def test_a_gone_snapshot_with_a_gone_index_gives_a_clear_error_and_switches_back(tmp_path, pelias_driver, fake_es):
+    one, two = make_package(tmp_path, "r-1", "1"), make_package(tmp_path, "r-2", "2")
+    pelias_driver.deploy_class(one, "pelias")
+    pelias_driver.deploy_class(two, "pelias")
+    fake_es.indices.pop("pelias_benelux-1")  # r-1 is still on the target as previous, but its index was dropped by hand
+    with pytest.raises(DeployError, match="unpacked snapshot .* is gone"):
+        pelias_driver.deploy_class(one, "pelias")
+    state = pelias_driver.describe_state(["pelias"])["pelias"]
+    assert (state["current"], state["previous"]) == ("r-2", "r-1")  # switched back to what was live
+
+
+def test_a_failing_cleanup_after_activation_is_a_warning(tmp_path, pelias_driver, fake_es, monkeypatch):
+    real = fake_es.__call__
+
+    def flaky(method, url, json=None, timeout=None):
+        if method == "DELETE" and "_snapshot" in url and "dm_r-1_" in url:
+            raise OSError("elasticsearch hiccup")
+        return real(method, url, json=json, timeout=timeout)
+    monkeypatch.setattr("datamanager.deploy.activators.requests.request", flaky)
+    result = pelias_driver.deploy_class(make_package(tmp_path, "r-1"), "pelias")
+    assert result["status"] == "ok" and "cleanup after activation failed" in result["warnings"][0]
+
+
+def test_redeploying_the_previous_release_needs_no_snapshot_while_its_index_is_there(tmp_path, pelias_driver, fake_es):
+    one, two = make_package(tmp_path, "r-1", "1"), make_package(tmp_path, "r-2", "2")
+    pelias_driver.deploy_class(one, "pelias")
+    pelias_driver.deploy_class(two, "pelias")
+    result = pelias_driver.deploy_class(one, "pelias")  # the snapshots of r-1 are long gone, its index is not
+    assert result["status"] == "ok" and result["current"] == "r-1" and result["previous"] == "r-2"
+
+
+def test_deploying_the_current_release_again_still_starts_the_supporting_services(tmp_path, fake_docker):
+    driver = _driver(tmp_path)
+    package = make_package(tmp_path, "r-1")
+    driver.deploy_class(package, "geodata")
+    fake_docker.calls.clear()
+    result = driver.deploy_class(package, "geodata")
+    assert result["status"] == "skipped" and result["warnings"] == []
+    assert [c[-1] for c in fake_docker.calls if "up" in c] == ["routerservice"]  # not recreated, nothing was copied

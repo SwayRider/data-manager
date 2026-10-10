@@ -1,11 +1,15 @@
 """Activators for the file classes: restart containers (valhalla, geodata) and restore Elasticsearch indices (pelias).
 
 `activate` blocks of a deploy configuration (`RELEASE-CONTRACT.md` §3.2):
-  {"type": "compose-restart", "services": {"benelux": "sw-dev-valhalla-benelux", ...}}      per region, or {"all": "<container>"}
-  {"type": "pelias-restore", "es_url": "http://localhost:39200", "restart": {"region": ["sw-dev-pelias-{region}-pip", ...],
-                                                                            "shared": ["sw-dev-pelias-placeholder"]}}
-`docker restart` re-resolves the bind-mounted `current` symlink, so a restart is enough to pick up a new release."""
+  {"type": "compose-restart", "services": {"benelux": "valhalla-benelux", ...}}      per region, or {"all": "regionservice"}
+  {"type": "pelias-restore", "es_url": "http://localhost:39200", "restart": {"region": ["pelias-{region}-pip", ...],
+                                                                            "shared": ["pelias-placeholder"]},
+   "ensure": ["pelias-libpostal"]}      services that must run but do not depend on a release: started when missing, not recreated
+With `"compose_file": "<path>"` in the block the names are compose services and are (re)created with `docker compose up -d
+--no-deps --force-recreate` (needed at the first deploy, when the containers do not exist yet); without it they are
+container names and `docker restart` is used, which also re-resolves the bind-mounted `current` symlink."""
 import json
+import shutil
 from pathlib import Path
 
 import requests
@@ -15,6 +19,46 @@ from datamanager.deploy.base import ACTIVATORS, ActivationContext, Activator
 from datamanager.errors import DeployError
 
 SNAPSHOT_MOUNT = "/usr/share/elasticsearch/snapshots"  # where the Elasticsearch container sees `es_snapshots`
+
+
+def _restart(ctx: ActivationContext, name: str) -> None:
+    """`compose_file` in the activate block = the names are compose services, (re)created with compose; otherwise they are
+    container names and are restarted (`docker restart` re-resolves the bind-mounted `current` symlink)."""
+    compose = ctx.settings.get("compose_file")
+    docker.compose_recreate(compose, name) if compose else docker.restart(name)
+
+
+def _ensure(ctx: ActivationContext) -> None:
+    """`ensure`: compose services that are not tied to a release but must run (started when missing, never recreated)."""
+    compose = ctx.settings.get("compose_file")
+    if compose:
+        for name in ctx.settings.get("ensure", []):
+            docker.compose_ensure(compose, name)
+
+
+def ensure_services(compose_file: str | None, names: list[str]) -> list[str]:
+    """Start supporting services that must run but whose failure does not make the data wrong (authservice, the router
+    that uses Valhalla, ...). Returns warnings instead of raising."""
+    warnings = []
+    for name in names:
+        try:
+            docker.compose_ensure(compose_file, name)
+        except DeployError as exc:
+            warnings.append(f"{name} did not start: {exc.message}")
+    return warnings
+
+
+def ensure_after(settings: dict) -> list[str]:
+    """`ensure_after` of an activate block: services that depend on this class (often in another compose file), started
+    once it is healthy: {"compose_file": "<path>", "services": [...]}; the compose file defaults to the block's own."""
+    block = settings.get("ensure_after") or {}
+    compose = block.get("compose_file") or settings.get("compose_file")
+    return ensure_services(compose, block.get("services", [])) if compose else []
+
+
+def _containers(ctx: ActivationContext, names: list[str]) -> list[str]:
+    compose = ctx.settings.get("compose_file")
+    return [docker.compose_container(compose, n) for n in names] if compose else names
 
 
 class ComposeRestart(Activator):
@@ -31,11 +75,12 @@ class ComposeRestart(Activator):
         return names
 
     def activate(self, ctx: ActivationContext) -> None:
+        _ensure(ctx)
         for name in self._containers(ctx):
-            docker.restart(name)
+            _restart(ctx, name)
 
     def check_health(self, ctx: ActivationContext) -> None:
-        docker.wait_ready(self._containers(ctx), float(ctx.options["health_timeout"]), ctx.settings.get("ready_urls"))
+        docker.wait_ready(_containers(ctx, self._containers(ctx)), float(ctx.options["health_timeout"]), ctx.settings.get("ready_urls"))
 
 
 class PeliasRestore(Activator):
@@ -80,14 +125,21 @@ class PeliasRestore(Activator):
             if self._es(ctx, "HEAD", f"/{index}", missing_ok=True) is not None:
                 continue  # the same index came with an earlier release (a repackaged build)
             repo = f"dm_{ctx.tag}_{region}"
+            snapshot_dir = Path(ctx.options["es_snapshots"]) / ctx.tag / region
+            if not snapshot_dir.is_dir():
+                raise DeployError(
+                    f"{region}: index {index} is not in Elasticsearch and its unpacked snapshot ({snapshot_dir}) is gone: "
+                    f"the snapshot is removed after a release went live. Remove the release {ctx.tag} from the target "
+                    f"(deploy another release, or delete releases/{ctx.tag}) and deploy it again.")
             self._es(ctx, "PUT", f"/_snapshot/{repo}", {"type": "fs", "settings": {
                 "location": f"{SNAPSHOT_MOUNT}/{ctx.tag}/{region}", "readonly": True}})
             answer = self._es(ctx, "POST", f"/_snapshot/{repo}/{index}/_restore?wait_for_completion=true",
                               {"indices": index, "include_global_state": False})
             if (answer.get("snapshot", {}).get("shards", {}).get("failed", 1)):
                 raise DeployError(f"{region}: restoring {index} failed: {json.dumps(answer)[:300]}")
+        _ensure(ctx)
         for name in self._containers(ctx):
-            docker.restart(name)
+            _restart(ctx, name)
 
     def check_health(self, ctx: ActivationContext) -> None:
         for region, index in self.indices(ctx.root, ctx.tag, ctx.regions).items():
@@ -95,7 +147,16 @@ class PeliasRestore(Activator):
             count = int(self._es(ctx, "GET", f"/{index}/_count", timeout=120).get("count", 0))
             if count == 0:
                 raise DeployError(f"{region}: index {index} is empty")
-        docker.wait_ready(self._containers(ctx), float(ctx.options["health_timeout"]), ctx.settings.get("ready_urls"))
+        docker.wait_ready(_containers(ctx, self._containers(ctx)), float(ctx.options["health_timeout"]), ctx.settings.get("ready_urls"))
+
+    def finalize(self, ctx: ActivationContext) -> None:
+        """The restored indices live in Elasticsearch now: the unpacked snapshot (~165 GB per release) and its repository
+        registration are not needed any more. A later restore unpacks it again from the package."""
+        for region in ctx.regions:
+            self._es(ctx, "DELETE", f"/_snapshot/dm_{ctx.tag}_{region}", missing_ok=True)
+        unpacked = Path(ctx.options["es_snapshots"]) / ctx.tag
+        if unpacked.exists():
+            shutil.rmtree(unpacked)
 
     def release_removed(self, ctx: ActivationContext) -> None:
         """Drop the indices and snapshot repositories of a release that is removed, except an index that a release
@@ -126,12 +187,11 @@ class TilesserviceEnv(Activator):
 
     def activate(self, ctx: ActivationContext) -> None:
         self._write_env(ctx)
-        docker.run(["compose", "-f", ctx.settings["compose_file"], "up", "-d", "--no-deps", "--force-recreate",
-                    ctx.settings.get("service", "tilesservice")], timeout=600)
+        docker.compose_recreate(ctx.settings["compose_file"], ctx.settings.get("service", "tilesservice"))
 
     def check_health(self, ctx: ActivationContext) -> None:
-        docker.wait_ready([ctx.settings.get("container", "sw-dev-tilesservice")], float(ctx.options["health_timeout"]),
-                          ctx.settings.get("ready_urls"))
+        container = docker.compose_container(ctx.settings["compose_file"], ctx.settings.get("service", "tilesservice"))
+        docker.wait_ready([container], float(ctx.options["health_timeout"]), ctx.settings.get("ready_urls"))
 
     def abandon(self, ctx: ActivationContext) -> None:
         Path(ctx.settings["env_file"]).unlink(missing_ok=True)

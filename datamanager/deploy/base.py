@@ -62,6 +62,10 @@ class Activator(ABC):
     def check_health(self, ctx: ActivationContext) -> None:
         """Raises DeployError when the services are not healthy within the timeout."""
 
+    def finalize(self, ctx: ActivationContext) -> None:
+        """Called after a healthy activation, before the old releases are removed: free what the release only needed to
+        get live (e.g. the unpacked Elasticsearch snapshots). A failure is a warning, the deploy has succeeded."""
+
     def abandon(self, ctx: ActivationContext) -> None:
         """A first activation failed and nothing was live before: undo what points the services at `ctx.tag`."""
 
@@ -92,13 +96,14 @@ class DeployDriver(ABC):
         """Truth from the target: per class `current`, `previous` and the releases present."""
 
     @abstractmethod
-    def plan_class(self, package: PackageView, class_: str) -> dict:
+    def plan_class(self, package: PackageView, class_: str, drop_previous: bool = False) -> dict:
         """What deploying this class would do: bytes, free space, problems, skip reason."""
 
     @abstractmethod
     def deploy_class(self, package: PackageView, class_: str, progress: ProgressCb | None = None,
-                     step: StepCb | None = None) -> dict:
-        """Copy, verify, switch, activate, health check, prune. Switches back on failure."""
+                     step: StepCb | None = None, drop_previous: bool = False) -> dict:
+        """Copy, verify, switch, activate, health check, prune. Switches back on failure. `drop_previous` removes the
+        previous release before anything is copied, to save space: there is no rollback target until this deploy is healthy."""
 
     @abstractmethod
     def rollback_class(self, class_: str, step: StepCb | None = None) -> dict:

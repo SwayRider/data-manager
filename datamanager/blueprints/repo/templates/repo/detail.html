@@ -6,7 +6,8 @@
   {% if package.status != 'complete' %}<span class="badge status-{{ package.status }}">{{ package.status }}</span>
   {% elif package.verified_at %}<span class="badge status-approved">verified</span>
   {% else %}<span class="badge status-failed">unverified</span>{% endif %}
-  {% if package.protected %}<span class="badge">protected</span>{% endif %}</h1>
+  {% if package.protected %}<span class="badge">protected</span>{% endif %}
+  {% for l in package.labels if l.key == 'live' %}<a class="badge status-approved" href="{{ url_for('deploy.workspace', key=l.value) }}" title="current or previous release of {{ l.value }}">live on {{ l.value }}</a>{% endfor %}</h1>
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <table class="resolved-table">
   <tr><th>Configuration</th><td>{{ config.name if config else '-' }}</td></tr>
@@ -72,7 +73,9 @@
 <h2>Delete</h2>
 <form class="form-actions" method="post" action="{{ url_for('repo.delete', tag=package.tag) }}"
       onsubmit="return confirm('Delete {{ package.tag }} and its files from the repository?')">
-  <button class="danger" {{ 'disabled' if package.protected }}>Delete package</button>
+  {% set live = package.labels|selectattr('key', 'equalto', 'live')|map(attribute='value')|list %}
+  <button class="danger" {{ 'disabled' if package.protected or live }}>Delete package</button>
   {% if package.protected %}<span class="muted">Protected: remove the protection first.</span>{% endif %}
+  {% if live %}<span class="muted">Live on {{ live|join(', ') }}: roll that environment to another release first.</span>{% endif %}
 </form>
 {% endblock %}

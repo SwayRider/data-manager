@@ -34,6 +34,27 @@ def restart(name: str) -> None:
     run(["restart", name])
 
 
+def compose_recreate(compose_file: str, service: str) -> None:
+    """Create or recreate one service of a compose file (without its dependencies). Unlike `restart` this also works
+    before the container exists, which is the case at the first deploy: the compose files do not start a service whose
+    data directory is missing."""
+    run(["compose", "-f", compose_file, "up", "-d", "--no-deps", "--force-recreate", service], timeout=900)
+
+
+def compose_ensure(compose_file: str, service: str) -> None:
+    """Make sure a service that does not depend on a release (e.g. libpostal) is running: start it when it is not, leave it
+    alone when it is (no recreate)."""
+    run(["compose", "-f", compose_file, "up", "-d", "--no-deps", service], timeout=900)
+
+
+def compose_container(compose_file: str, service: str) -> str:
+    proc = run(["compose", "-f", compose_file, "ps", "-q", "-a", service], timeout=60, check=False)
+    ident = (proc.stdout or "").strip().splitlines()
+    if proc.returncode != 0 or not ident:
+        raise DeployError(f"compose service {service} has no container after starting it")
+    return ident[0]
+
+
 def state(name: str) -> dict:
     proc = run(["inspect", "-f", "{{json .State}}", name], timeout=30, check=False)
     if proc.returncode != 0:

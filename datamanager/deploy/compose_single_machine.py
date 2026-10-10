@@ -13,7 +13,7 @@ import os
 import shutil
 import tarfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from datamanager.deploy.base import (ACTIVATORS, ActivationContext, Activator, DeployDriver, PackageView, PartView,
@@ -108,6 +108,15 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     # ---- configuration ------------------------------------------------------------------------------------------
 
+    def ensure_base(self, step: StepCb | None = None) -> list[str]:
+        """Services no release depends on (auth, mail, ...): started when missing, never recreated. Warnings, not errors."""
+        block = self.config.get("ensure") or {}
+        if not block.get("services"):
+            return []
+        if step:
+            step("Ensure base services")
+        return activators.ensure_services(block.get("compose_file"), block["services"])
+
     @classmethod
     def validate_config(cls, config: dict) -> list[str]:
         problems = []
@@ -130,9 +139,16 @@ class ComposeSingleMachineDriver(DeployDriver):
                 problems.append(f"classes.{name}.root: an absolute path is required")
             if name == "pelias" and not os.path.isabs(str((block or {}).get("es_snapshots") or "")):
                 problems.append("classes.pelias.es_snapshots: an absolute path is required")
-            kind = ((block or {}).get("activate") or {"type": "none"}).get("type")
-            if kind not in ACTIVATORS:
-                problems.append(f"classes.{name}.activate.type: unknown '{kind}'")
+            activate = (block or {}).get("activate") or {"type": "none"}
+            if activate.get("type") not in ACTIVATORS:
+                problems.append(f"classes.{name}.activate.type: unknown '{activate.get('type')}'")
+            after = activate.get("ensure_after")
+            if after is not None and not (isinstance(after, dict) and isinstance(after.get("services"), list)):
+                problems.append(f"classes.{name}.activate.ensure_after: {{\"compose_file\": ..., \"services\": [...]}} is required")
+        ensure = config.get("ensure")
+        if ensure is not None and not (isinstance(ensure, dict) and isinstance(ensure.get("services"), list)
+                                       and (not ensure["services"] or os.path.isabs(str(ensure.get("compose_file") or "")))):
+            problems.append("ensure: {\"compose_file\": <absolute path>, \"services\": [...]} is required")
         order = config.get("activation_order")
         if order is not None and (not isinstance(order, list) or not set(order) <= set(classes)):
             problems.append("activation_order: must list configured classes only")
@@ -207,9 +223,9 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     # ---- plan ---------------------------------------------------------------------------------------------------
 
-    def plan_class(self, package: PackageView, class_: str) -> dict:
+    def plan_class(self, package: PackageView, class_: str, drop_previous: bool = False) -> dict:
         if class_ == "tiles":
-            return self._tiles().plan_class(package)
+            return self._tiles().plan_class(package, drop_previous)
         parts = package.of_class(class_)
         root = self.root(class_)
         problems, skip = [], None
@@ -227,6 +243,10 @@ class ComposeSingleMachineDriver(DeployDriver):
         need_root = 0 if present else sum(p.size for p in todo if target_of(class_, p).kind != "snapshot")
         need_snap = 0 if present else sum(p.size for p in todo if target_of(class_, p).kind == "snapshot")
         free_root = shutil.disk_usage(_existing_parent(root)).free
+        previous = self._pointer(root, "previous")
+        drops = previous if drop_previous and previous and previous != package.tag and not skip else None
+        if drops and (root / "releases" / drops).is_dir():
+            free_root += _dir_size(root / "releases" / drops)  # freed before the copy starts
         if need_root * FREE_SPACE_FACTOR > free_root and not skip:
             problems.append(f"not enough free space on {root}: need {need_root * FREE_SPACE_FACTOR / 1e9:.1f} GB, "
                             f"free {free_root / 1e9:.1f} GB")
@@ -238,7 +258,7 @@ class ComposeSingleMachineDriver(DeployDriver):
                                 f"free {free_snap / 1e9:.1f} GB")
         return {"class": class_, "tag": package.tag, "parts": len(parts), "bytes": sum(p.size for p in parts),
                 "bytes_to_copy": need_root + need_snap, "present": present, "current": current,
-                "previous": self._pointer(root, "previous"), "skip": skip, "problems": problems}
+                "previous": previous, "drops_previous": drops, "skip": skip, "problems": problems}
 
     # ---- transfer -----------------------------------------------------------------------------------------------
 
@@ -320,7 +340,7 @@ class ComposeSingleMachineDriver(DeployDriver):
     # ---- verify -------------------------------------------------------------------------------------------------
 
     def _verify(self, package: PackageView, class_: str, folder: Path, progress: ProgressCb | None,
-                step: StepCb | None) -> None:
+                step: StepCb | None, fresh: bool = True) -> None:
         mode = self.options["verify"]
         parts = package.of_class(class_)
         files = [(p, target_of(class_, p)) for p in parts]
@@ -340,6 +360,8 @@ class ComposeSingleMachineDriver(DeployDriver):
                         problems.append(f"{target.dest}: sha256 mismatch")
             else:
                 # unpacked content has no hash of its own: the source stream was hashed while unpacking
+                if target.kind == "snapshot" and not fresh:
+                    continue  # unpacked snapshots are removed once the release is live (the index lives in Elasticsearch)
                 where = (self._es_snapshots() / package.tag / target.dest) if target.kind == "snapshot" else folder / target.dest
                 if not where.exists():
                     problems.append(f"{target.dest}: missing")
@@ -415,18 +437,37 @@ class ComposeSingleMachineDriver(DeployDriver):
 
     # ---- the whole class ------------------------------------------------------------------------------------------
 
+    def drop_previous_release(self, class_: str, keep_tag: str | None = None, step: StepCb | None = None) -> str | None:
+        """Remove the previous release now (indices, unpacked snapshots, files, the `previous` link). Returns its tag."""
+        root = self.root(class_)
+        previous = self._pointer(root, "previous")
+        if not previous or previous == keep_tag:
+            return None
+        if step:
+            step(f"Remove previous release {previous}")
+        ctx = self._context(class_, previous)
+        ctx = replace(ctx, kept=tuple(t for t in ctx.kept if t != previous))  # an index only previous used may go
+        self._activator(class_)[0].release_removed(ctx)
+        self._switch(root, "previous", None)
+        shutil.rmtree(root / "releases" / previous, ignore_errors=True)
+        if class_ == "pelias":
+            shutil.rmtree(self._es_snapshots() / previous, ignore_errors=True)
+        return previous
+
     def deploy_class(self, package: PackageView, class_: str, progress: ProgressCb | None = None,
-                     step: StepCb | None = None) -> dict:
+                     step: StepCb | None = None, drop_previous: bool = False) -> dict:
         if class_ == "tiles":
-            return self._tiles().deploy_class(package, progress, step)
-        plan = self.plan_class(package, class_)
+            return self._tiles().deploy_class(package, progress, step, drop_previous)
+        plan = self.plan_class(package, class_, drop_previous)
         if plan["problems"]:
             raise DeployError(f"{class_}: " + "; ".join(plan["problems"]), problems=plan["problems"])
-        if plan["skip"]:
-            return {"class": class_, "status": "skipped", "reason": plan["skip"], "current": package.tag}
+        if plan["skip"]:  # nothing to copy, but the services around the class still get their chance to start
+            return {"class": class_, "status": "skipped", "reason": plan["skip"], "current": package.tag,
+                    "warnings": activators.ensure_after(self._block(class_).get("activate") or {})}
         root, tag = self.root(class_), package.tag
         final, partial = root / "releases" / tag, root / "releases" / f"{tag}.partial"
         root.mkdir(parents=True, exist_ok=True)
+        dropped = self.drop_previous_release(class_, tag, step) if drop_previous else None
         if not final.is_dir():
             self._transfer(package, class_, partial, progress, step)
             self._verify(package, class_, partial, progress, step)
@@ -434,7 +475,7 @@ class ComposeSingleMachineDriver(DeployDriver):
                 step(f"Finalize {class_}")
             partial.rename(final)
         else:
-            self._verify(package, class_, final, progress, step)
+            self._verify(package, class_, final, progress, step, fresh=False)
         old_current = self._pointer(root, "current")
         before = self._flip(class_, tag, previous=old_current)
         try:
@@ -454,13 +495,17 @@ class ComposeSingleMachineDriver(DeployDriver):
                     pass
             raise DeployError(f"{class_}: activation of {tag} failed ({exc}); "
                               + (f"switched back to {before['current']}" if before["current"] else "nothing was live before")) from exc
-        warnings = []
+        warnings = activators.ensure_after(self._block(class_).get("activate") or {})
+        try:
+            self._activator(class_)[0].finalize(self._context(class_, tag))
+        except Exception as exc:  # the release is live; leftovers are only wasted space
+            warnings.append(f"cleanup after activation failed: {exc}")
         try:
             removed = self.prune_class(class_)
         except Exception as exc:  # the deploy itself succeeded
-            removed, warnings = [], [f"cleanup of old releases failed: {exc}"]
+            removed, warnings = [], warnings + [f"cleanup of old releases failed: {exc}"]
         return {"class": class_, "status": "ok", "current": tag, "previous": old_current, "removed": removed,
-                "warnings": warnings}
+                "dropped_previous": dropped, "warnings": warnings}
 
     def rollback_class(self, class_: str, step: StepCb | None = None) -> dict:
         if class_ == "tiles":
@@ -481,6 +526,10 @@ class ComposeSingleMachineDriver(DeployDriver):
             raise DeployError(f"{class_}: rollback to {previous} failed ({exc}); {current} is current again") from exc
         removed = self.prune_class(class_)  # the release that was rolled back is gone from the target
         return {"class": class_, "status": "rolled_back", "current": previous, "rolled_back": current, "removed": removed}
+
+
+def _dir_size(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file() and not f.is_symlink())
 
 
 def _existing_parent(path: Path) -> Path:

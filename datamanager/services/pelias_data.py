@@ -5,7 +5,7 @@ Everything is laid out below one directory per region (`Layout`) in the shape th
     wof/sqlite/whosonfirst-data-{admin,postalcode}-<cc>-latest.db   (WOF bundles unpacked, or the patched database)
     geonames/<cc>/<CC>.zip                                          (re-zipped: the original is not always readable)
     openaddresses/<source>.geojson                                  (gunzipped job output, as the importer's downloader does)
-    osm/<slug>.osm.pbf, polylines/polylines.0sv.gz                  (links to the approved assets)
+    osm/<slug>.osm.pbf (link), polylines/polylines.0sv (gunzipped: the importer does not)
 
 The importers run from the cloned repositories (`pelias_build.repo_dir`) with `PELIAS_CONFIG` set; a configuration has no
 token because everything is downloaded already."""
@@ -162,7 +162,7 @@ def prepare(layout: Layout, countries: list[CountryData], openaddresses: dict[st
     for theme, file in (overture or {}).items():
         _link(file, layout.csv / OVERTURE_FILES[theme])
     _link(pbf, layout.osm / layout.pbf_name)
-    _link(polylines, layout.polylines / "polylines.0sv.gz")
+    gunzip(polylines, layout.polylines / "polylines.0sv")  # the polylines importer reads the file as plain text, it does not gunzip
     for directory in (layout.leveldb, layout.csv, layout.transit, layout.configs, layout.logs):
         directory.mkdir(parents=True, exist_ok=True)
     return {"countries": len(countries), "openaddresses_files": len(openaddresses), "overture_files": len(overture or {})}
@@ -180,14 +180,14 @@ def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof
                      "hosts": [{"env": "development", "protocol": "http", "host": es_host, "port": es_port}],
                      "log": [{"type": "stdio", "json": False, "level": ["error", "warning"]}]},
         "elasticsearch": {"settings": {"index": {"number_of_replicas": "0", "number_of_shards": "1", "refresh_interval": "1m"}}},
-        # the deployed API asks the per-region interpolation service (street.db/address.db); the import has none
-        "interpolation": {"client": {"adapter": "http", "host": f"http://pelias-{layout.slug}-interpolation:{INTERPOLATION_PORT}"}
-                          if prod else {"adapter": "null"}},
+        # importers push nothing to the interpolation service; the deployed API asks it through api.services.interpolation
+        "interpolation": {"client": {"adapter": "null"}},
         "dbclient": {"statFrequency": 10000, "batchSize": 500},
         "api": {
             "accessLog": "common", "indexName": index,
             "services": {"placeholder": {"url": PLACEHOLDER_URL}, "libpostal": {"url": LIBPOSTAL_URL},
-                         "pip": {"url": f"http://pelias-{layout.slug}-pip:3102", "timeout": 1000, "retries": 2}},
+                         "pip": {"url": f"http://pelias-{layout.slug}-pip:3102", "timeout": 1000, "retries": 2},
+                         **({"interpolation": {"url": f"http://pelias-{layout.slug}-interpolation:{INTERPOLATION_PORT}"}} if prod else {})},
             "targets": {
                 "auto_discover": True,
                 "canonical_sources": ["whosonfirst", "openstreetmap", "openaddresses", "geonames"],
@@ -213,7 +213,7 @@ def render_config(layout: Layout, *, index: str, es_host: str, es_port: int, wof
             "openstreetmap": {"datapath": str(layout.osm), "leveldbpath": str(layout.leveldb), "removeDisusedVenues": True,
                               "import": [{"filename": layout.pbf_name}]},
             "openaddresses": {"datapath": str(layout.openaddresses), "files": openaddresses},
-            "polyline": {"datapath": str(layout.polylines), "files": ["polylines.0sv.gz"]},
+            "polyline": {"datapath": str(layout.polylines), "files": ["polylines.0sv"]},
             "whosonfirst": {"datapath": wof_path, "importPostalcodes": True, "countryCode": wof_codes},
             "transit": {"datapath": str(layout.transit), "feeds": transit_feeds or []},
         },
