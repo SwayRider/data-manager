@@ -1,6 +1,6 @@
 # RELEASE-CONTRACT.md — packages, deploy configurations, deploys
 
-Handover spec for the **publish/deploy side** of data-manager (DESIGN.md Phase 3, migration step A4). **Implemented on the server where data-manager runs** so it can be tested there; this machine only records decisions. Code state read 2026-10-05: stages and assets exist (migrations 0001–0018); the `repo` and `deploy` sidebar pages are empty stubs (`blueprints/repo/routes.py`, `blueprints/deploy/routes.py`); there are **no** `assembly` / `publish_record` / `deployment_*` tables yet; `releases/` and `deploy-state/` exist under `DATA_ROOT` but are empty.
+Handover spec for the **publish/deploy side** of data-manager (DESIGN.md Phase 3, migration step A4). **Implemented on the server where data-manager runs** so it can be tested there; this machine only records decisions. Code state when this spec was written (2026-10-05): stages and assets existed (migrations 0001–0018); the `repo` and `deploy` pages were empty stubs and there were no package or deployment tables. **As of 2026-10-10 the package repository (migrations 0019–0020) and the deploy (migration 0021, `datamanager/deploy/`, `/deploy`, `flask deploy-*`) are built and ran for real on dev-mini; see §9 for the as-built notes.**
 
 Context and the per-service/target side: [`../Docs/MIGRATION-DATA-MANAGER.md`](../Docs/MIGRATION-DATA-MANAGER.md) (§3 deployment strategy, Phase A4), tilesservice contract in `SERVICES.md` and `TILESSERVICE-PMTILES.md`.
 
