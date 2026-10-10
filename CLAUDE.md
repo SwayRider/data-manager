@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `data-manager` is a Flask app replacing the sibling `data-pipeline` scripts (OSM → border → valhalla → pelias, plus tiles) with orchestrated, DB-tracked stages. `DESIGN.md` is the authoritative plan (architecture, full schema, phased roadmap, open risks) — read it before adding features. Phases 0–6 are built (foundations, configuration UI, downloads and the OSM/border/Valhalla/styles/Pelias stages); assembly/publish/deploy (Phase 3) is not (`DESIGN.md` "Modular Development Plan" has the status per phase). Design decisions worth remembering: clean slate (no import of legacy pipeline output), config authored via a map UI (Phase 1) rather than YAML, and `data-pipeline` must stay untouched (code-wise; it is only bannered as deprecated). The platform-level migration plan — steps across services, infra and the copy-based deployment strategy (per-artifact roots, `current` symlink, copy → verify → activate → rollback) — is in `../Docs/MIGRATION-DATA-MANAGER.md`; keep it in sync with `SERVICES.md` and `DESIGN.md`.
 
+`README.md` is the entry point for people (status as a debug build, prerequisites, setup, how to start); keep it in sync when setup steps, tools or scripts change.
+
 ## Workflow
 
 - **Branch, signed commits, pull request.** Every change to data-manager goes through a topic branch and a pull request, never straight on `main`. CI runs the shared DCO check (`.github/workflows/ci.yml`), so commits carry a `Signed-off-by` trailer: `git commit -s`. Use separate commits per logical part and a PR description that says what was verified (tests, real runs) and what was not.
